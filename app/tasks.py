@@ -9,6 +9,9 @@ logger = get_task_logger(__name__)
 # ---- Celery ----
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "")
 celery_app = Celery("tasks", broker=CELERY_BROKER_URL)
+celery_app.conf.broker_connection_retry_on_startup = True
+celery_app.conf.result_backend = CELERY_BROKER_URL  # use Redis for results
+celery_app.conf.task_ignore_result = True           # or ignore results entirely
 
 # ---- Supabase ----
 SUPABASE_URL = os.getenv("SUPABASE_URL","")
