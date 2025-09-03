@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>French AI Tutor API - Starter v2</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 40px; }
+      button { padding: 10px 16px; border-radius: 8px; }
+      pre { background: #f6f6f6; padding: 12px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>✅ API is running</h1>
+    <p>Use this page to test your Render deployment.</p>
+
+    <button id="ping">Ping /health</button>
+    <button id="demo">POST /api/lessons (demo)</button>
+
+    <pre id="out"></pre>
+
+    <script>
+      const out = document.getElementById('out');
+      document.getElementById('ping').onclick = async () => {
+        const r = await fetch('/health');
+        out.textContent = JSON.stringify(await r.json(), null, 2);
+      };
+      document.getElementById('demo').onclick = async () => {
+        const r = await fetch('/api/lessons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ child_id: 'demo-child', file_path: 'uploads/demo.pdf' })
+        });
+        out.textContent = JSON.stringify(await r.json(), null, 2);
+      };
+    </script>
+  </body>
+</html>
