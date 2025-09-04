@@ -9,3 +9,4 @@ PyMuPDF==1.24.9
 pytesseract==0.3.10
 Pillow==10.4.0
 PyJWT==2.9.0
+openai>=1.40.0
