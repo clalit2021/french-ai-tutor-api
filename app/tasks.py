@@ -84,7 +84,9 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
     2) OCR/Describe:
          - PDF -> PyMuPDF text extraction
          - Image -> OpenAI Vision
-    3) Generate interactive lesson JSON (STRICT) and FORCE valid image URLs
+    3) Generate lesson JSON with:
+         - plan: goals + 30-minute activities with teacher/student scripts
+         - ui_steps: interactive cards (note/speak/question/image)
     4) Save to Supabase
     """
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
@@ -171,32 +173,64 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
 
         update({"ocr_text": text[:10000]})
 
-        # --- 3) Build interactive lesson JSON (STRICT schema prompt)
+        # --- 3) Build full lesson JSON (plan + ui_steps)
         if OPENAI_API_KEY:
             api = "https://api.openai.com/v1/chat/completions"
+
+            # STRICT schema with a real lesson plan + interactive steps
             sys = (
-                "You are a playful French tutor for an 11-year-old.\n"
-                "Always reply with STRICTLY valid JSON and NOTHING else.\n"
-                "Output must be parseable by json.loads.\n"
-                "Use ONLY this schema: {\"ui_steps\": [ ... ]}\n"
-                "Allowed step shapes exactly:\n"
-                "  {\"type\":\"note\",\"title\":\"...\",\"text\":\"...\"}\n"
-                "  {\"type\":\"speak\",\"title\":\"...\",\"text\":\"...\"}\n"
-                "  {\"type\":\"question\",\"prompt\":\"...\",\"options\":[\"...\"],\"answer_index\":0}\n"
-                "  {\"type\":\"image\",\"image_url\":\"<URL>\",\"caption\":\"...\"}\n"
-                "You MUST include at least ONE image step and set its image_url to the URL provided."
+                "You are a playful, structured French (FLE A1/A2) tutor for an 11-year-old.\n"
+                "OUTPUT STRICTLY VALID JSON ONLY, parseable by json.loads, no extra text.\n"
+                "SCHEMA:\n"
+                "{\n"
+                '  "plan": {\n'
+                '    "title": "string",\n'
+                '    "goals": ["string", ...],\n'
+                '    "duration_min": 30,\n'
+                '    "materials": ["string", ...],\n'
+                '    "activities": [\n'
+                '      {\n'
+                '        "title": "string",\n'
+                '        "minutes": 5,\n'
+                '        "script": {\n'
+                '          "teacher_says": ["string", ...],\n'
+                '          "student_does": ["string", ...]\n'
+                '        }\n'
+                '      }, ...\n'
+                '    ]\n'
+                '  },\n'
+                '  "ui_steps": [\n'
+                '    {"type":"note","title":"...","text":"..."},\n'
+                '    {"type":"speak","title":"...","text":"..."},\n'
+                '    {"type":"question","prompt":"...","options":["..."],"answer_index":0},\n'
+                '    {"type":"image","image_url":"<URL>","caption":"..."}\n'
+                '  ]\n'
+                "}\n"
+                "CONSTRAINTS:\n"
+                "- Use kid-friendly French (A1/A2), short sentences.\n"
+                "- Include at least one 'image' step in ui_steps using the provided URL.\n"
+                "- 5 activities totalling ~30 minutes. Include warm-up, matching, world map discovery, role-play, creative wrap-up.\n"
+                "- Align with goals from symbols of France and La Francophonie, even if the image shows only part of it.\n"
             )
 
+            # We nudge content toward your desired outline inside the user message.
             user_content = [
                 {
                     "type": "text",
                     "text": (
-                        "Create a 2–4 step interactive FLE mini-lesson (A1/A2) based on this OCR/description:\n"
-                        f"{text[:1200]}\n"
-                        'Return STRICT JSON: {"ui_steps":[ ... ]}.\n'
-                        "Include at least one speak-aloud prompt AND at least one image step "
-                        "with \"type\":\"image\" and \"image_url\" equal to the provided URL. "
-                        "Kid-friendly French only."
+                        "Base the lesson on this OCR/description:\n"
+                        f"{text[:1200]}\n\n"
+                        "Build a 30-minute plan with these themes:\n"
+                        "- Reconnaître des symboles français (tour Eiffel, croissant, baguette, fromage)\n"
+                        "- Découvrir la Francophonie (Montréal, Bruxelles, Martinique, Bamako, Tahiti)\n\n"
+                        "Activities to include (adjust to fit the page content if needed):\n"
+                        "1) Échauffement – deviner la photo\n"
+                        "2) Jeu d’association – France en images\n"
+                        "3) Découverte carte – Francophonie\n"
+                        "4) Jeu de rôle – Guide touristique\n"
+                        "5) Création – Mon pays\n\n"
+                        "Return STRICT JSON with both keys: plan + ui_steps. "
+                        "In ui_steps include: one image step (use the provided URL), one speak prompt, and one simple question."
                     ),
                 },
                 {"type": "image_url", "image_url": {"url": url}},  # visual context
@@ -232,15 +266,42 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                     try:
                         lesson_json = json.loads(match.group(0))
                     except Exception:
-                        lesson_json = {"ui_steps": [{"type": "note", "text": "JSON parse failed"}]}
+                        lesson_json = {
+                            "plan": {
+                                "title": "Mini-leçon",
+                                "goals": ["Découvrir des symboles français", "Explorer la Francophonie"],
+                                "duration_min": 30,
+                                "materials": [],
+                                "activities": []
+                            },
+                            "ui_steps": [{"type": "note", "title": "Erreur de format", "text": "JSON parse failed"}]
+                        }
                 else:
-                    lesson_json = {"ui_steps": [{"type": "note", "text": "JSON parse failed"}]}
+                    lesson_json = {
+                        "plan": {
+                            "title": "Mini-leçon",
+                            "goals": ["Découvrir des symboles français", "Explorer la Francophonie"],
+                            "duration_min": 30,
+                            "materials": [],
+                            "activities": []
+                        },
+                        "ui_steps": [{"type": "note", "title": "Erreur de format", "text": "JSON parse failed"}]
+                    }
 
-            # Force all image URLs to our Supabase URL (fixes example.com/photo.jpg etc.)
+            # Ensure ui_steps images use the real Supabase URL
             lesson_json = _force_image_urls(lesson_json, url)
 
         else:
-            lesson_json = {"ui_steps": [{"type": "note", "text": "OPENAI_API_KEY missing"}]}
+            lesson_json = {
+                "plan": {
+                    "title": "Mini-leçon (démo)",
+                    "goals": ["Clé API OpenAI manquante"],
+                    "duration_min": 5,
+                    "materials": [],
+                    "activities": []
+                },
+                "ui_steps": [{"type": "note", "title": "Démo", "text": "OPENAI_API_KEY missing"}]
+            }
 
         # --- 4) Save & finish
         update({
