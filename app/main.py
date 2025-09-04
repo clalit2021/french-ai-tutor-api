@@ -4,9 +4,13 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from supabase import create_client, Client
 from app.tasks import process_lesson  # Celery task
+from app.tutor_sync import bp as tutor_sync_bp
 
 app = Flask(__name__)
 CORS(app)
+
+# ---- Register blueprints ----
+app.register_blueprint(tutor_sync_bp, url_prefix="/api/tutor_sync")
 
 # ---- Env & Supabase client (service role) ----
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -15,21 +19,24 @@ supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_SERVICE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
+
 @app.get("/health")
 def health():
     return jsonify(ok=True, status="healthy")
 
+
 def _get_user_id_from_auth():
-    auth = request.headers.get("Authorization","")
+    auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return None
-    token = auth.split(" ",1)[1]
+    token = auth.split(" ", 1)[1]
     try:
         import jwt
         payload = jwt.decode(token, options={"verify_signature": False})
         return payload.get("sub") or payload.get("user_id")
     except Exception:
         return None
+
 
 @app.post("/api/lessons")
 def api_lessons():
@@ -55,7 +62,9 @@ def api_lessons():
         "uploaded_file_path": file_path,
         "status": "processing"
     }
-    lesson = supabase.table("lessons").insert(lesson_rec).execute() if supabase else type("X",(object,),{"data":[{"id":"dev-lesson-id"}]})()
+    lesson = supabase.table("lessons").insert(lesson_rec).execute() if supabase else type(
+        "X", (object,), {"data": [{"id": "dev-lesson-id"}]}
+    )()
     lesson_id = lesson.data[0]["id"]
 
     # Enqueue Celery job
@@ -63,17 +72,19 @@ def api_lessons():
         process_lesson.delay(str(lesson_id), file_path, str(child_id))
     except Exception as e:
         if supabase:
-            supabase.table("lessons").update({"status":"error"}).eq("id", lesson_id).execute()
+            supabase.table("lessons").update({"status": "error"}).eq("id", lesson_id).execute()
         return jsonify(ok=False, error=f"Enqueue failed: {e}"), 500
 
     return jsonify(ok=True, lesson_id=lesson_id, status="processing"), 202
 
+
 @app.get("/api/lessons/<lesson_id>")
 def get_lesson(lesson_id):
     if not supabase:
-        return jsonify(status="completed", lesson={"ui_steps":[{"type":"note","text":"Dev mode lesson (no DB)."}]})
+        return jsonify(status="completed", lesson={"ui_steps": [{"type": "note", "text": "Dev mode lesson (no DB)."}]})
     lesson = supabase.table("lessons").select("*").eq("id", lesson_id).execute()
     if not lesson.data:
         return jsonify(error="Not found"), 404
     rec = lesson.data[0]
     return jsonify(status=rec["status"], lesson=rec.get("lesson_data"))
+
