@@ -7,6 +7,7 @@ from datetime import datetime
 from celery import Celery
 from celery.utils.log import get_task_logger
 from supabase import create_client, Client
+from requests.utils import unquote  # <-- NEW: to decode %20 etc.
 
 logger = get_task_logger(__name__)
 
@@ -45,7 +46,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
     2) OCR/Describe:
          - PDF -> PyMuPDF text extraction
          - Image -> OpenAI Vision (no Tesseract needed)
-    3) Generate interactive lesson JSON (image-aware, STRICT JSON)
+    3) Generate interactive lesson JSON (STRICT + image step)
     4) Save to Supabase (status=completed) or mark error
     """
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
@@ -55,8 +56,11 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             supabase.table("lessons").update(fields).eq("id", lesson_id).execute()
 
     try:
-        # --- 1) Download file bytes + build its public URL
-        url = _public_storage_url(file_path)
+        # --- 1) Build public URL (decode %20, %28, etc. first)
+        clean_path = unquote(file_path) if "%" in file_path else file_path  # <-- NEW
+        url = _public_storage_url(clean_path)
+
+        # Download file bytes (also verifies object exists)
         resp = requests.get(url, timeout=90)
         resp.raise_for_status()
         content = resp.content
@@ -64,7 +68,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
 
         # --- 2) OCR / description
         text = ""
-        ext = os.path.splitext(file_path)[1].lower()
+        ext = os.path.splitext(clean_path)[1].lower()
 
         if ext == ".pdf":
             # PDF -> extract text with PyMuPDF
@@ -81,10 +85,8 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                         pass
                 doc.close()
             finally:
-                try:
-                    os.remove(tmp_pdf)
-                except Exception:
-                    pass
+                try: os.remove(tmp_pdf)
+                except Exception: pass
             if not text.strip():
                 text = "Leçon: PDF sans texte détectable."
         else:
@@ -101,7 +103,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                             "type": "text",
                             "text": "Lis le texte de l'image (en français) et résume les éléments clés pour une mini-leçon FLE (enfant 11 ans)."
                         },
-                        { "type": "image_url", "image_url": { "url": url } }
+                        {"type": "image_url", "image_url": {"url": url}},
                     ]
                     payload_v = {
                         "model": "gpt-4o-mini",
@@ -133,7 +135,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
         if OPENAI_API_KEY:
             api = "https://api.openai.com/v1/chat/completions"
 
-            # >>> changed: tightly-scoped schema + MUST include image step using `url`
+            # Tight schema + requirement to include an image step using the same URL
             sys = (
                 "You are a playful French tutor for an 11-year-old.\n"
                 "Always reply with STRICTLY valid JSON and NOTHING else.\n"
@@ -159,8 +161,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                         "Kid-friendly French only."
                     ),
                 },
-                # Provide the image itself for context; the model must reuse the same URL in the image step.
-                { "type": "image_url", "image_url": { "url": url } }
+                {"type": "image_url", "image_url": {"url": url}},  # visual context
             ]
 
             payload = {
@@ -197,8 +198,11 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                 else:
                     lesson_json = {"ui_steps": [{"type": "note", "text": "JSON parse failed; fallback."}]}
 
-            # Hard safety net: if no image step slipped through, inject one using the same URL.
-            has_image = any(isinstance(s, dict) and s.get("type") == "image" and s.get("image_url") for s in lesson_json.get("ui_steps", []))
+            # Safety net: if model forgot an image step, inject one
+            has_image = any(
+                isinstance(s, dict) and s.get("type") == "image" and s.get("image_url")
+                for s in lesson_json.get("ui_steps", [])
+            )
             if not has_image:
                 lesson_json.setdefault("ui_steps", []).insert(0, {
                     "type": "image",
