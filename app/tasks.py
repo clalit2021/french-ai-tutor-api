@@ -7,7 +7,7 @@ from datetime import datetime
 from celery import Celery
 from celery.utils.log import get_task_logger
 from supabase import create_client, Client
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote  # safe encode/decode for storage paths
 
 logger = get_task_logger(__name__)
 
@@ -30,15 +30,52 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 def _public_storage_url(path: str) -> str:
     """
-    Build a *public* Supabase Storage URL and percent-encode the path safely.
+    Build a public Supabase Storage URL and percent-encode safely.
     Accepts bucket-relative paths like 'uploads/Screenshot 2025-09-02 191857.png'
     """
     base = SUPABASE_URL.rstrip("/").replace(
         "supabase.co", "supabase.co/storage/v1/object/public"
     )
-    clean = unquote(path).lstrip("/")            # decode any %XX in user input
-    encoded = quote(clean, safe="/")             # re-encode spaces, keep slashes
+    clean = unquote(path).lstrip("/")      # normalize any %XX from user input
+    encoded = quote(clean, safe="/")       # keep slashes; encode spaces -> %20
     return f"{base}/{encoded}"
+
+def _force_image_urls(lesson_json: dict, url: str) -> dict:
+    """
+    Ensure every image shown uses our known-good Supabase URL.
+    - Overwrite any step.type == 'image' -> image_url = url
+    - If step.images list exists, reduce to first item and set its url = url
+    - If no image step exists, inject one at the top
+    """
+    ui = lesson_json.get("ui_steps") or []
+    has_image = False
+
+    for step in ui:
+        if not isinstance(step, dict):
+            continue
+
+        if step.get("type") == "image":
+            step["image_url"] = url
+            step.setdefault("caption", "Regarde l'image et dis ce que tu vois.")
+            has_image = True
+
+        imgs = step.get("images")
+        if isinstance(imgs, list) and imgs:
+            first = imgs[0] if isinstance(imgs[0], dict) else {}
+            first["url"] = url
+            first.pop("image_url", None)
+            step["images"] = [first]
+            has_image = True
+
+    if not has_image:
+        ui.insert(0, {
+            "type": "image",
+            "image_url": url,
+            "caption": "Regarde l'image et dis ce que tu vois."
+        })
+
+    lesson_json["ui_steps"] = ui
+    return lesson_json
 
 @celery_app.task(name="tasks.process_lesson", bind=True)
 def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
@@ -47,7 +84,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
     2) OCR/Describe:
          - PDF -> PyMuPDF text extraction
          - Image -> OpenAI Vision
-    3) Generate interactive lesson JSON (STRICT + must include image step)
+    3) Generate interactive lesson JSON (STRICT) and FORCE valid image URLs
     4) Save to Supabase
     """
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
@@ -57,10 +94,11 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             supabase.table("lessons").update(fields).eq("id", lesson_id).execute()
 
     try:
-        # --- 1) Build public URL
+        # --- 1) Build public URL from the plain path (with spaces)
         url = _public_storage_url(file_path)
         logger.info(f"[JOB] image_url={url}")
 
+        # Verify object exists (also fetch bytes if needed for PDF OCR)
         resp = requests.get(url, timeout=90)
         resp.raise_for_status()
         content = resp.content
@@ -71,6 +109,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
         ext = os.path.splitext(file_path)[1].lower()
 
         if ext == ".pdf":
+            # PDF -> extract text with PyMuPDF
             import fitz, tempfile
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                 f.write(content)
@@ -84,11 +123,14 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                         pass
                 doc.close()
             finally:
-                try: os.remove(tmp_pdf)
-                except Exception: pass
+                try:
+                    os.remove(tmp_pdf)
+                except Exception:
+                    pass
             if not text.strip():
                 text = "Leçon: PDF sans texte détectable."
         else:
+            # Image -> OpenAI Vision (no Tesseract)
             if OPENAI_API_KEY:
                 try:
                     vision_api = "https://api.openai.com/v1/chat/completions"
@@ -97,8 +139,10 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                         "If little text is present, briefly describe the scene in French for an 11-year-old learner."
                     )
                     user_v = [
-                        {"type": "text",
-                         "text": "Lis le texte de l'image (en français) et résume les éléments clés pour une mini-leçon FLE (enfant 11 ans)."},
+                        {
+                            "type": "text",
+                            "text": "Lis le texte de l'image (en français) et résume les éléments clés pour une mini-leçon FLE (enfant 11 ans)."
+                        },
                         {"type": "image_url", "image_url": {"url": url}},
                     ]
                     payload_v = {
@@ -127,7 +171,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
 
         update({"ocr_text": text[:10000]})
 
-        # --- 3) Build interactive lesson JSON
+        # --- 3) Build interactive lesson JSON (STRICT schema prompt)
         if OPENAI_API_KEY:
             api = "https://api.openai.com/v1/chat/completions"
             sys = (
@@ -135,7 +179,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                 "Always reply with STRICTLY valid JSON and NOTHING else.\n"
                 "Output must be parseable by json.loads.\n"
                 "Use ONLY this schema: {\"ui_steps\": [ ... ]}\n"
-                "Allowed step shapes:\n"
+                "Allowed step shapes exactly:\n"
                 "  {\"type\":\"note\",\"title\":\"...\",\"text\":\"...\"}\n"
                 "  {\"type\":\"speak\",\"title\":\"...\",\"text\":\"...\"}\n"
                 "  {\"type\":\"question\",\"prompt\":\"...\",\"options\":[\"...\"],\"answer_index\":0}\n"
@@ -155,7 +199,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                         "Kid-friendly French only."
                     ),
                 },
-                {"type": "image_url", "image_url": {"url": url}},
+                {"type": "image_url", "image_url": {"url": url}},  # visual context
             ]
 
             payload = {
@@ -179,6 +223,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             lresp.raise_for_status()
             content_str = lresp.json()["choices"][0]["message"]["content"]
 
+            # Strict parse; if it fails, use regex to extract the first {...}
             try:
                 lesson_json = json.loads(content_str)
             except Exception:
@@ -191,20 +236,13 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                 else:
                     lesson_json = {"ui_steps": [{"type": "note", "text": "JSON parse failed"}]}
 
-            has_image = any(
-                isinstance(s, dict) and s.get("type") == "image" and s.get("image_url")
-                for s in lesson_json.get("ui_steps", [])
-            )
-            if not has_image:
-                lesson_json.setdefault("ui_steps", []).insert(0, {
-                    "type": "image",
-                    "image_url": url,
-                    "caption": "Regarde l'image et dis ce que tu vois."
-                })
+            # Force all image URLs to our Supabase URL (fixes example.com/photo.jpg etc.)
+            lesson_json = _force_image_urls(lesson_json, url)
+
         else:
             lesson_json = {"ui_steps": [{"type": "note", "text": "OPENAI_API_KEY missing"}]}
 
-        # --- 4) Save
+        # --- 4) Save & finish
         update({
             "lesson_data": lesson_json,
             "status": "completed",
