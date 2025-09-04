@@ -118,7 +118,14 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
         # 3) Build interactive lesson JSON (image-aware)
         if OPENAI_API_KEY:
             api = "https://api.openai.com/v1/chat/completions"
-            sys = "You are a playful French tutor for an 11-year-old. Reply ONLY valid JSON."
+            sys = (
+  "You are a playful French tutor for an 11-year-old. "
+  "Always reply with STRICTLY valid JSON, nothing else. "
+  "Do not add explanations, apologies, or text outside JSON. "
+  "Output must be parseable by json.loads in Python. "
+  "Use this schema only: {\"ui_steps\": [...]}"
+)
+
             user_content = [
                 {"type": "text",
                  "text": (
