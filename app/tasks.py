@@ -1,3 +1,4 @@
+# tasks.py
 import os
 import re
 import json
@@ -44,7 +45,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
     2) OCR/Describe:
          - PDF -> PyMuPDF text extraction
          - Image -> OpenAI Vision (no Tesseract needed)
-    3) Generate interactive lesson JSON (image-aware, strict JSON)
+    3) Generate interactive lesson JSON (image-aware, STRICT JSON)
     4) Save to Supabase (status=completed) or mark error
     """
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
@@ -100,10 +101,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                             "type": "text",
                             "text": "Lis le texte de l'image (en français) et résume les éléments clés pour une mini-leçon FLE (enfant 11 ans)."
                         },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": url}
-                        }
+                        { "type": "image_url", "image_url": { "url": url } }
                     ]
                     payload_v = {
                         "model": "gpt-4o-mini",
@@ -131,30 +129,39 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
 
         update({"ocr_text": text[:10000]})
 
-        # --- 3) Build interactive lesson JSON (strict + regex fallback)
+        # --- 3) Build interactive lesson JSON (STRICT + forced image step)
         if OPENAI_API_KEY:
             api = "https://api.openai.com/v1/chat/completions"
+
+            # >>> changed: tightly-scoped schema + MUST include image step using `url`
             sys = (
-                "You are a playful French tutor for an 11-year-old. "
-                "Always reply with STRICTLY valid JSON, nothing else. "
-                "Do not add explanations, apologies, or text outside JSON. "
-                "Output must be parseable by json.loads in Python. "
-                "Use this schema only: {\"ui_steps\": [...]}"
+                "You are a playful French tutor for an 11-year-old.\n"
+                "Always reply with STRICTLY valid JSON and NOTHING else.\n"
+                "Output must be parseable by json.loads.\n"
+                "Use ONLY this schema: {\"ui_steps\": [ ... ]}\n"
+                "Allowed step shapes exactly:\n"
+                "  {\"type\":\"note\",\"title\":\"...\",\"text\":\"...\"}\n"
+                "  {\"type\":\"speak\",\"title\":\"...\",\"text\":\"...\"}\n"
+                "  {\"type\":\"question\",\"prompt\":\"...\",\"options\":[\"...\"],\"answer_index\":0}\n"
+                "  {\"type\":\"image\",\"image_url\":\"<URL>\",\"caption\":\"...\"}\n"
+                "You MUST include at least ONE image step (type=image) and set its image_url to the URL provided."
             )
+
             user_content = [
                 {
                     "type": "text",
                     "text": (
-                        "Create a short interactive French lesson (2–4 steps) based on this OCR/description:\n"
+                        "Create a 2–4 step interactive FLE mini-lesson (A1/A2) based on this OCR/description:\n"
                         f"{text[:1200]}\n"
-                        'Return STRICTLY valid JSON in this schema: {"ui_steps":[ ... ]}. '
-                        "Use kid-friendly French (FLE A1/A2). Include at least one speak-aloud prompt."
+                        'Return STRICT JSON: {"ui_steps":[ ... ]}.\n'
+                        "Include at least one speak-aloud prompt AND at least one image step "
+                        "with \"type\":\"image\" and \"image_url\" equal to the provided URL. "
+                        "Kid-friendly French only."
                     ),
-                }
+                },
+                # Provide the image itself for context; the model must reuse the same URL in the image step.
+                { "type": "image_url", "image_url": { "url": url } }
             ]
-            # If it's an image, also attach image for visual context
-            if ext != ".pdf":
-                user_content.append({"type": "image_url", "image_url": {"url": url}})
 
             payload = {
                 "model": "gpt-4o-mini",
@@ -164,6 +171,7 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                 ],
                 "temperature": 0.4,
             }
+
             lresp = requests.post(
                 api,
                 headers={
@@ -188,6 +196,15 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                         lesson_json = {"ui_steps": [{"type": "note", "text": "JSON parse failed; fallback."}]}
                 else:
                     lesson_json = {"ui_steps": [{"type": "note", "text": "JSON parse failed; fallback."}]}
+
+            # Hard safety net: if no image step slipped through, inject one using the same URL.
+            has_image = any(isinstance(s, dict) and s.get("type") == "image" and s.get("image_url") for s in lesson_json.get("ui_steps", []))
+            if not has_image:
+                lesson_json.setdefault("ui_steps", []).insert(0, {
+                    "type": "image",
+                    "image_url": url,
+                    "caption": "Regarde l'image et dis ce que tu vois."
+                })
         else:
             lesson_json = {"ui_steps": [{"type": "note", "text": "OPENAI_API_KEY missing. Demo step only."}]}
 
