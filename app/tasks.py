@@ -9,6 +9,8 @@ logger = get_task_logger(__name__)
 # ---- Celery ----
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "")
 celery_app = Celery("tasks", broker=CELERY_BROKER_URL)
+
+# Prevent AMQP attempts and silence the startup warning
 celery_app.conf.broker_connection_retry_on_startup = True
 celery_app.conf.result_backend = CELERY_BROKER_URL  # use Redis for results
 celery_app.conf.task_ignore_result = True           # or ignore results entirely
@@ -24,13 +26,26 @@ if SUPABASE_URL and SUPABASE_SERVICE_KEY:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY","")
 
 def _public_storage_url(path:str)->str:
-    base = SUPABASE_URL.replace("supabase.co","supabase.co/storage/v1/object/public")
+    """
+    Convert bucket path like 'uploads/folder/file.png' to a public URL
+    e.g. https://<proj>.supabase.co/storage/v1/object/public/uploads/folder/file.png
+    """
+    base = SUPABASE_URL.replace("supabase.co", "supabase.co/storage/v1/object/public")
     return f"{base}/{path}"
 
 @celery_app.task(name="tasks.process_lesson", bind=True)
 def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
-    """Background job: download file, OCR, generate lesson JSON, save to DB."""
+    """
+    Background job:
+      1) Download file from Supabase public URL
+      2) OCR/Describe content:
+           - PDF -> PyMuPDF text extraction
+           - Image -> OpenAI Vision (no Tesseract needed)
+      3) Use OpenAI to generate interactive lesson JSON (image-aware)
+      4) Save to Supabase: status=completed
+    """
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
+
     def update(fields:dict):
         if supabase:
             supabase.table("lessons").update(fields).eq("id", lesson_id).execute()
@@ -38,62 +53,122 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
     try:
         # 1) Download file
         url = _public_storage_url(file_path)
-        r = requests.get(url, timeout=60)
+        r = requests.get(url, timeout=90)
         r.raise_for_status()
         content = r.content
         logger.info(f"[JOB] downloaded {len(content)} bytes")
 
-        # 2) Extract text: PDF -> PyMuPDF; image -> pytesseract
+        # 2) OCR / description
         text = ""
         ext = os.path.splitext(file_path)[1].lower()
         if ext == ".pdf":
+            # PDF -> extract text with PyMuPDF
             import fitz, tempfile
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-                f.write(content); tmp = f.name
-            doc = fitz.open(tmp)
+                f.write(content); tmp_pdf = f.name
+            doc = fitz.open(tmp_pdf)
             for p in doc:
-                text += p.get_text()
+                try:
+                    text += p.get_text() or ""
+                except Exception:
+                    pass
             doc.close()
+            if not text.strip():
+                text = "Leçon: PDF sans texte détectable."
         else:
-            try:
-                from PIL import Image
-                import pytesseract, tempfile
-                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
-                    f.write(content); ipath = f.name
-                img = Image.open(ipath)
-                text = pytesseract.image_to_string(img, lang="fra")
-            except Exception as e:
-                logger.warning(f"[JOB] pytesseract not available: {e}")
-        if not text.strip():
-            text = "Leçon: images et lieux français. (OCR vide)"
+            # Image -> OpenAI Vision (no Tesseract needed)
+            if OPENAI_API_KEY:
+                try:
+                    vision_api = "https://api.openai.com/v1/chat/completions"
+                    sys_v = (
+                        "You transcribe and summarize text from images in French when present. "
+                        "If little text is present, briefly describe the scene in French for an 11-year-old learner."
+                    )
+                    user_v = [
+                        {"type": "text",
+                         "text": "Lis le texte de l'image (en français) et résume les éléments clés pour une mini-leçon FLE (enfant 11 ans)."},
+                        {"type": "image_url", "image_url": {"url": url}}
+                    ]
+                    payload_v = {
+                        "model": "gpt-4o-mini",
+                        "messages": [
+                            {"role": "system", "content": sys_v},
+                            {"role": "user", "content": user_v}
+                        ],
+                        "temperature": 0.2
+                    }
+                    vresp = requests.post(
+                        vision_api,
+                        headers={
+                            "Authorization": f"Bearer {OPENAI_API_KEY}",
+                            "Content-Type": "application/json"
+                        },
+                        json=payload_v,
+                        timeout=120
+                    )
+                    vresp.raise_for_status()
+                    text = vresp.json()["choices"][0]["message"]["content"].strip()
+                except Exception as e:
+                    logger.warning(f"[JOB] vision OCR failed: {e}")
+            if not text.strip():
+                text = "Leçon: description d'image/texte non extrait."
+
         update({"ocr_text": text[:10000]})
 
-        # 3) OpenAI lesson JSON
+        # 3) Build interactive lesson JSON (image-aware)
         if OPENAI_API_KEY:
             api = "https://api.openai.com/v1/chat/completions"
             sys = "You are a playful French tutor for an 11-year-old. Reply ONLY valid JSON."
-            user = f"""Create a 2-step interactive lesson from this text. Use simple French.
-Return {{
-  "ui_steps":[
-    {{"type":"image_card","text":"C'est la tour Eiffel !","image_url":"https://upload.wikimedia.org/wikipedia/commons/a/a8/Tour_Eiffel_Wikimedia_Commons.jpg"}},
-    {{"type":"question","question":"Où parle-t-on français ?","options":["Montréal","Tokyo"],"correct_option":0}}
-  ]
-}}. Text source:\\n{text[:800]}
-"""
-            payload = {"model":"gpt-4o-mini","messages":[{"role":"system","content":sys},{"role":"user","content":user}],"temperature":0.4}
-            resp = requests.post(api, headers={"Authorization":f"Bearer {OPENAI_API_KEY}","Content-Type":"application/json"}, json=payload, timeout=60)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            try:
-                lesson_json = json.loads(content)
-            except Exception:
-                lesson_json = {"ui_steps":[{"type":"note","text":"JSON parse failed; fallback card."}]}
-        else:
-            lesson_json = {"ui_steps":[{"type":"note","text":"OPENAI_API_KEY missing. Demo step only."}]}
+            user_content = [
+                {"type": "text",
+                 "text": (
+                     "Create a short interactive French lesson (2–4 steps) based on this OCR/description:\n"
+                     f"{text[:1200]}\n"
+                     'Return STRICTLY valid JSON in this schema: {"ui_steps":[ ... ]}. '
+                     "Use kid-friendly French (FLE A1/A2). Include at least one speak-aloud prompt."
+                 )}
+            ]
+            # If it's an image, attach it so the model can use visual context
+            if ext != ".pdf":
+                user_content.append({"type": "image_url", "image_url": {"url": url}})
 
-        # 4) Save
-        update({"lesson_data": lesson_json, "status":"completed", "completed_at": datetime.utcnow().isoformat()})
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": user_content}
+                ],
+                "temperature": 0.4
+            }
+            resp = requests.post(
+                api,
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
+                         "Content-Type": "application/json"},
+                json=payload,
+                timeout=120
+            )
+            resp.raise_for_status()
+            content_str = resp.json()["choices"][0]["message"]["content"]
+            try:
+                lesson_json = json.loads(content_str)
+            except Exception:
+                lesson_json = {
+                    "ui_steps": [
+                        {"type": "note", "text": "JSON parse failed; using fallback."},
+                        {"type": "question", "question": "Où parle-t-on français ?", "options": ["Montréal", "Tokyo"], "correct_option": 0}
+                    ]
+                }
+        else:
+            lesson_json = {"ui_steps": [{"type": "note", "text": "OPENAI_API_KEY missing. Demo step only."}]}
+
+        # 4) Save and finish
+        update({
+            "lesson_data": lesson_json,
+            "status": "completed",
+            "completed_at": datetime.utcnow().isoformat()
+        })
         logger.info(f"[JOB] lesson {lesson_id} completed")
+
     except Exception as e:
         logger.error(f"[JOB] failed: {e}", exc_info=True)
-        update({"status":"error"})
+        update({"status": "error"})
