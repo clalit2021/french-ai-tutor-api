@@ -158,16 +158,38 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             content_str = resp.json()["choices"][0]["message"]["content"]
            import re
 
-try:
-    lesson_json = json.loads(content_str)
-except Exception:
-    # try to extract JSON object with regex
-    match = re.search(r"\{.*\}", content_str, re.S)
-    if match:
+            import re
+
+                     import re
+
         try:
-            lesson_json = json.loads(match.group(0))
+            lesson_json = json.loads(content_str)
         except Exception:
-            lesson_json = {"ui_steps":[{"type":"note","text":"JSON parse failed; fallback."}]}
+            # try to extract JSON object with regex
+            match = re.search(r"\{.*\}", content_str, re.S)
+            if match:
+                try:
+                    lesson_json = json.loads(match.group(0))
+                except Exception:
+                    lesson_json = {
+                        "ui_steps":[
+                            {"type":"note","text":"JSON parse failed; fallback."}
+                        ]
+                    }
+            else:
+                lesson_json = {
+                    "ui_steps":[
+                        {"type":"note","text":"JSON parse failed; fallback."}
+                    ]
+                }
+
+            else:
+                lesson_json = {
+                    "ui_steps":[
+                        {"type":"note","text":"JSON parse failed; fallback."}
+                    ]
+                }
+
     else:
         lesson_json = {"ui_steps":[{"type":"note","text":"JSON parse failed; fallback."}]}
 
