@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>French AI Tutor – Démarrer une leçon</title>
+  <title>French AI Tutor - Demarrer une lecon</title>
   <style>
     :root { --bg:#f6f7fb; --card:#fff; --ink:#212529; --accent:#6c5ce7; --muted:#6b7280; }
     * { box-sizing: border-box; }
@@ -36,15 +36,15 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="title">Parle avec Mimi — Démarrer une leçon</div>
-    <div class="sub">Entre le <b>chemin du fichier</b> dans Supabase Storage (ex: <code>uploads/Screenshot 2025-09-02 191857.png</code>) et clique <b>Démarrer</b>.</div>
+    <div class="title">Parle avec Mimi - Demarrer une lecon</div>
+    <div class="sub">Entre le <b>chemin du fichier</b> dans Supabase Storage (ex: <code>uploads/Screenshot.png</code>) et clique <b>Demarrer</b>.</div>
 
     <div class="panel">
       <div class="row">
         <input id="filePath" type="text" placeholder="uploads/mon-fichier.pdf ou uploads/page.png" />
-        <button id="startBtn">Démarrer la leçon</button>
+        <button id="startBtn">Demarrer la lecon</button>
       </div>
-      <div class="hint">Enfant ID (démo): <span id="childId" class="idpill">2e735737-96fc-4d46-8bb9-19f72d8f6215</span></div>
+      <div class="hint">Enfant ID (demo): <span id="childId" class="idpill">2e735737-96fc-4d46-8bb9-19f72d8f6215</span></div>
       <div id="status" class="status"></div>
       <div id="steps" class="steps"></div>
     </div>
@@ -56,8 +56,8 @@
 
   <script>
     // ==== CONFIG ====
-    const API_BASE = "https://french-ai-tutor-api.onrender.com"; // change if your API URL differs
-    const CHILD_ID = "2e735737-96fc-4d46-8bb9-19f72d8f6215";     // your demo child_id
+    const API_BASE = "https://french-ai-tutor-api.onrender.com"; // backend URL
+    const CHILD_ID = "2e735737-96fc-4d46-8bb9-19f72d8f6215";     // demo child_id
     document.getElementById('apiBaseShow').textContent = API_BASE;
 
     // ==== DOM refs ====
@@ -71,7 +71,6 @@
     function setStatus(msg){ el.status.textContent = msg; }
     function clearSteps(){ el.steps.innerHTML = ""; }
 
-    // ==== helpers ====
     async function postJSON(url, body){
       const r = await fetch(url, {
         method: 'POST',
@@ -96,103 +95,30 @@
       } catch(e) { console.warn('TTS failed', e); }
     }
 
-    // ==== RENDERERS ====
-    function renderLegacyStep(step){ // type: 'note'|'speak'|'question'|'image'
+    // ---- renderers ----
+    function renderPromptStep(step){
       const card = document.createElement('div');
       card.className = 'card';
-
-      if(step.type === 'note' || step.type === 'text'){
-        if(step.title){
-          const h = document.createElement('h4'); h.textContent = step.title; card.appendChild(h);
-        }
-        if(step.text){
-          const p = document.createElement('p'); p.textContent = step.text; card.appendChild(p);
-          const b = document.createElement('button'); b.textContent = 'Écouter 🔊'; b.onclick = () => speak(step.text);
-          card.appendChild(b);
-        }
-      } else if(step.type === 'speak'){
-        const h = document.createElement('h4'); h.textContent = step.title || 'Répète après moi'; card.appendChild(h);
-        const p = document.createElement('p'); p.textContent = step.text || ''; p.className = 'text-lg speak'; card.appendChild(p);
-        const b = document.createElement('button'); b.textContent = 'Écouter & répéter 🔊'; b.onclick = () => speak(step.text || '');
-        card.appendChild(b);
-      } else if(step.type === 'question'){
-        const h = document.createElement('h4'); h.textContent = step.prompt || step.question || 'Question'; card.appendChild(h);
-        const box = document.createElement('div'); box.className = 'q-options';
-        (step.options || []).forEach((opt, idx) => {
-          const btn = document.createElement('button'); btn.textContent = opt;
-          btn.onclick = () => {
-            const correct = idx === (step.correct_option ?? step.answer_index);
-            btn.classList.add(correct ? 'correct' : 'wrong');
-          };
-          box.appendChild(btn);
-        });
-        card.appendChild(box);
-      } else if(step.type === 'image'){
-        if(step.image_url){
-          const img = document.createElement('img');
-          img.className = 'img';
-          img.src = step.image_url;
-          img.alt = step.caption || 'image';
-          card.appendChild(img);
-        }
-        if(step.caption){
-          const p = document.createElement('p'); p.textContent = step.caption; card.appendChild(p);
-        }
-      } else {
-        const p = document.createElement('p'); p.textContent = JSON.stringify(step); card.appendChild(p);
-      }
-
-      return card;
-    }
-
-    function renderPromptStep(step){ // format: { step: "...", prompt: "..." }
-      const card = document.createElement('div');
-      card.className = 'card';
-
       if(step.step){
         const p = document.createElement('p');
-        p.className = 'text-lg';
         p.textContent = "👉 " + step.step;
         card.appendChild(p);
       }
       if(step.prompt){
         const q = document.createElement('p');
-        q.className = 'text-lg speak';
+        q.className = 'speak';
         q.textContent = "🗣️ " + step.prompt;
         card.appendChild(q);
-
         const b = document.createElement('button');
-        b.textContent = 'Écouter 🔊';
+        b.textContent = 'Ecouter 🔊';
         b.onclick = () => speak(step.prompt);
         card.appendChild(b);
       }
-
-      // if it accidentally includes image_url/caption, show them
-      if(step.image_url){
-        const img = document.createElement('img');
-        img.className = 'img';
-        img.src = step.image_url;
-        img.alt = step.caption || 'image';
-        card.appendChild(img);
-      }
-      if(step.caption){
-        const c = document.createElement('p');
-        c.textContent = step.caption;
-        card.appendChild(c);
-      }
-
       return card;
     }
 
     function renderStepAuto(step){
-      // choose renderer based on fields present
-      if (step && (step.type || step.options || step.image_url)) {
-        return renderLegacyStep(step);
-      }
-      if (step && (step.step || step.prompt)) {
-        return renderPromptStep(step);
-      }
-      // fallback
+      if (step && (step.step || step.prompt)) return renderPromptStep(step);
       const card = document.createElement('div');
       card.className = 'card';
       const p = document.createElement('p'); p.textContent = JSON.stringify(step);
@@ -200,13 +126,11 @@
       return card;
     }
 
-    // ==== FLOW ====
     async function pollLesson(lessonId){
-      setStatus(`⏳ En cours… (lesson_id: ${lessonId})`);
+      setStatus(`⏳ En cours... (lesson_id: ${lessonId})`);
       clearSteps();
-
       const started = Date.now();
-      const TIMEOUT_MS = 120000; // 2 minutes
+      const TIMEOUT_MS = 120000;
       while (Date.now() - started < TIMEOUT_MS){
         await new Promise(r => setTimeout(r, 1500));
         try {
@@ -214,23 +138,12 @@
           if (data.status === 'completed'){
             setStatus('✅ Terminé');
             clearSteps();
-
-            // steps could be in data.lesson.ui_steps OR data.lesson.lesson_data.ui_steps
-            const steps =
-              (data.lesson && data.lesson.ui_steps) ||
-              (data.lesson && data.lesson.lesson_data && data.lesson.lesson_data.ui_steps) ||
-              [];
-
+            const steps = (data.lesson && data.lesson.lesson_data && data.lesson.lesson_data.ui_steps) || [];
             steps.forEach(s => el.steps.appendChild(renderStepAuto(s)));
             return;
           }
-          if (data.status === 'error'){
-            setStatus('❌ Erreur pendant la génération.');
-            return;
-          }
-        } catch(e) {
-          console.warn('poll failed', e);
-        }
+          if (data.status === 'error'){ setStatus('❌ Erreur pendant la génération.'); return; }
+        } catch(e){ console.warn('poll failed', e); }
       }
       setStatus('⌛ Temps dépassé.');
     }
@@ -238,26 +151,18 @@
     async function startLesson(){
       const path = el.path.value.trim();
       if(!path){ alert("Entre un chemin de fichier valide"); return; }
-
       el.start.disabled = true;
-      setStatus("Envoi…");
+      setStatus("Envoi...");
       clearSteps();
-
       try {
         const resp = await postJSON(`${API_BASE}/api/lessons`, {
           child_id: CHILD_ID,
           file_path: path
         });
-        if (resp.lesson_id){
-          pollLesson(resp.lesson_id);
-        } else {
-          setStatus("❌ Erreur: pas de lesson_id");
-        }
-      } catch(e){
-        setStatus(`❌ Erreur API: ${e.message}`);
-      } finally {
-        el.start.disabled = false;
-      }
+        if (resp.lesson_id){ pollLesson(resp.lesson_id); }
+        else { setStatus("❌ Erreur: pas de lesson_id"); }
+      } catch(e){ setStatus(`❌ Erreur API: ${e.message}`); }
+      finally { el.start.disabled = false; }
     }
 
     el.start.onclick = startLesson;
