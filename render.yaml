@@ -1,4 +1,4 @@
-services:
+﻿services:
   - type: web
     name: french-ai-tutor-web
     env: docker
@@ -15,7 +15,7 @@ services:
       - key: CELERY_BROKER_URL
         sync: false
 
-    - type: worker
+  - type: worker
     name: french-ai-tutor-worker
     env: docker
     plan: starter
@@ -37,4 +37,3 @@ services:
         sync: false
       - key: CELERY_BROKER_URL
         sync: false
-
