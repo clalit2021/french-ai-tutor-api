@@ -7,63 +7,55 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-
 from supabase import create_client, Client
 from openai import OpenAI
 
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Flask app
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Environment & Clients
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL_TEXT = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")
 OPENAI_MODEL_IMAGE = os.getenv("OPENAI_MODEL_IMAGE", "gpt-image-1")
 
-supabase: Client = None
+supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_SERVICE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-openai_client: OpenAI = None
+openai_client: OpenAI | None = None
 if OPENAI_API_KEY:
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Helpers
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 def _public_storage_url(path: str) -> str:
-    """
-    Convert 'uploads/file.png' to public URL
-    """
+    """Convert 'uploads/file.png' to public URL"""
     path = path.lstrip("/")
     return f"{SUPABASE_URL}/storage/v1/object/public/{path}"
-
 
 def _safe_trim(text: str, limit: int = 12000) -> str:
     return (text or "")[:limit]
 
-
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Routes
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 @app.get("/health")
 def health():
     return jsonify(ok=True, status="healthy")
-
 
 @app.get("/")
 def root():
     return app.send_static_file("index.html")
 
-
-# ----------------------------- ASYNC PIPELINE ---------------------------------
+# ---------------------- ASYNC LESSON PIPELINE -------------------------------
 @app.post("/api/lessons")
 def create_lesson():
     """
@@ -91,9 +83,8 @@ def create_lesson():
         return jsonify({"error": "insert failed"}), 500
 
     lesson_id = res.data[0]["id"]
-    # Normally enqueue Celery here
+    # Normally you would enqueue Celery here
     return jsonify({"lesson_id": lesson_id, "status": "processing"}), 202
-
 
 @app.get("/api/lessons/<lesson_id>")
 def get_lesson(lesson_id):
@@ -104,8 +95,7 @@ def get_lesson(lesson_id):
         return jsonify({"error": "not found"}), 404
     return jsonify(res.data[0])
 
-
-# ----------------------------- SYNC LESSON V2 ---------------------------------
+# ---------------------- SYNC LESSON GENERATION ------------------------------
 SYSTEM_PROMPT = (
     "You are Mimi, a warm, patient French tutor for an 11-year-old (A1–A2 level). "
     "Turn input (topic, text, images) into a complete 30-minute lesson. "
@@ -127,7 +117,7 @@ def build_lesson_v2():
         "topic_hint": topic,
         "pdf_text_excerpt": pdf_text,
         "image_descriptions": image_desc,
-        "age": age
+        "age": age,
     }
 
     resp = openai_client.chat.completions.create(
@@ -135,9 +125,10 @@ def build_lesson_v2():
         temperature=0.4,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(user_payload)}
-        ]
+            {"role": "user", "content": json.dumps(user_payload)},
+        ],
     )
+
     text = (resp.choices[0].message.content or "").strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -151,8 +142,7 @@ def build_lesson_v2():
 
     return jsonify({"lesson": lesson})
 
-
-# ----------------------------- IMAGE GENERATION -------------------------------
+# ---------------------- IMAGE GENERATION ------------------------------------
 @app.post("/api/v2/generate_images")
 def generate_images_v2():
     if not openai_client:
@@ -173,11 +163,11 @@ def generate_images_v2():
             img = openai_client.images.generate(
                 model=OPENAI_MODEL_IMAGE,
                 prompt=prompt,
-                size="512x512"
+                size="512x512",
             )
             b64 = img.data[0].b64_json
             out.append({"id": _id, "b64": b64})
-            time.sleep(0.3)
+            time.sleep(0.3)  # polite delay
         except Exception as e:
             errs.append({"id": _id, "error": str(e)})
 
@@ -186,8 +176,7 @@ def generate_images_v2():
         resp["errors"] = errs
     return jsonify(resp)
 
-
-# ----------------------------- SAVE IMAGE TO STORAGE --------------------------
+# ---------------------- SAVE IMAGE TO SUPABASE ------------------------------
 @app.post("/api/v2/save_image")
 def save_image_to_supabase():
     if not supabase:
@@ -210,7 +199,6 @@ def save_image_to_supabase():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
