@@ -26,6 +26,7 @@
     .status{ font-size:14px; color:var(--muted); margin-top:8px }
     .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#efeefe; border:1px solid #dcdced; font-size:12px; margin-left:8px }
     .objective{ background:#fbfbff; border:1px solid #ececf6; border-radius:8px; padding:8px 10px; margin:6px 0 }
+    img.thumb{ max-width:200px; margin:6px 8px 0 0; border-radius:8px; border:1px solid #ececf6 }
   </style>
 </head>
 <body>
@@ -36,7 +37,7 @@
       <h2>Créer une leçon</h2>
 
       <label for="filePath">Chemin du fichier Supabase</label>
-      <input id="filePath" name="filePath" type="text" placeholder="uploads/Screenshot_2025-09-02_191857.png" />
+      <input id="filePath" name="filePath" type="text" placeholder="uploads/x.pdf ou .png" />
 
       <label for="topic">Sujet (optionnel)</label>
       <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
@@ -45,7 +46,7 @@
       <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
 
       <label for="imageHints">Descriptions d'images (séparées par ;)</label>
-      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; baguette" />
+      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; croissant; Paris skyline" />
 
       <div class="row">
         <button id="btnSync">Démarrer la leçon (sync)</button>
@@ -72,13 +73,9 @@
 
   <script>
     // -------- Config --------
-    // Safe fallback if opened via file:// — uses your local Flask server.
     const API_BASE = (window.location.origin && window.location.origin.startsWith("http"))
       ? window.location.origin
       : "http://localhost:5000";
-    // Or hardcode your deployed API:
-    // const API_BASE = "https://french-ai-tutor-api.onrender.com";
-
     const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // demo
 
     // -------- Helpers --------
@@ -102,7 +99,6 @@
       if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
       return JSON.parse(txt);
     }
-
     async function getJSON(url){
       const r = await fetch(url);
       const txt = await r.text();
@@ -110,25 +106,18 @@
       return JSON.parse(txt);
     }
 
-    // -------- Envelope unwrap --------
     function unwrapLessonEnvelope(resp){
       if(!resp) return null;
       if(resp.lesson && typeof resp.lesson === "object") return resp.lesson;
       return resp;
     }
-
-    // -------- Canonicalize to expected UI schema --------
     function toCanonicalLesson(raw){
       if(!raw) return null;
-      // Backend now returns strict JSON keys:
-      // title, duration, objectives[], plan[], image_prompts[], first_tutor_messages[]
       const L = JSON.parse(JSON.stringify(raw));
-
       const title = typeof L.title === "string" ? L.title : "Leçon";
       const duration = L.duration || "";
       const objectives = Array.isArray(L.objectives) ? L.objectives : [];
 
-      // PLAN
       let plan = [];
       if (Array.isArray(L.plan)) {
         plan = L.plan.map(x => ({
@@ -138,13 +127,11 @@
         }));
       }
 
-      // IMAGE PROMPTS
       let image_prompts = Array.isArray(L.image_prompts) ? L.image_prompts.slice() : [];
       if (!image_prompts.length && Array.isArray(L.imagePrompts)) {
         image_prompts = L.imagePrompts.slice();
       }
 
-      // FIRST TUTOR MESSAGES
       let first_tutor_messages = [];
       if (Array.isArray(L.first_tutor_messages)) first_tutor_messages = L.first_tutor_messages;
       else if (Array.isArray(L.firstTutorMessages)) first_tutor_messages = L.firstTutorMessages;
@@ -152,13 +139,7 @@
 
       return { title, duration, objectives, plan, image_prompts, first_tutor_messages };
     }
-
-    // ---- Compatibility shim
-    function normalizeLesson(raw){
-      // Accept both shapes: {lesson:{...}} or {...}
-      const unwrapped = unwrapLessonEnvelope(raw);
-      return toCanonicalLesson(unwrapped);
-    }
+    function normalizeLesson(raw){ return toCanonicalLesson(unwrapLessonEnvelope(raw)); }
 
     function speak(text){
       try{
@@ -205,7 +186,7 @@
         planEl.appendChild(d);
       });
 
-      // Image prompts
+      // Image prompts (text list first)
       imagesEl.innerHTML = "<h3>Prompts d'images</h3>";
       (canon.image_prompts || []).forEach((p,i)=>{
         const d = document.createElement("div");
@@ -213,21 +194,25 @@
         d.textContent = p.prompt || "";
         imagesEl.appendChild(d);
       });
+    }
 
-      // First tutor message
-      tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
-      const msgs = canon.first_tutor_messages || [];
-      if(msgs.length){
-        const t = document.createElement("div");
-        t.className = "mono";
-        t.textContent = msgs[0];
-        tutorEl.appendChild(t);
-
-        const b = document.createElement("button");
-        b.className = "secondary";
-        b.textContent = "Écouter";
-        b.onclick = ()=>speak(msgs[0]);
-        tutorEl.appendChild(b);
+    async function maybeGenerateAndRenderImages(canon){
+      if (!canon || !Array.isArray(canon.image_prompts) || !canon.image_prompts.length) return;
+      try{
+        const gen = await postJSON(`${API_BASE}/api/v2/generate_images`, { image_prompts: canon.image_prompts });
+        if (Array.isArray(gen.images) && gen.images.length){
+          const h = document.createElement("h3"); h.textContent = "Images";
+          imagesEl.appendChild(h);
+          gen.images.forEach(img=>{
+            const el = document.createElement("img");
+            el.className = "thumb";
+            el.src = `data:image/png;base64,${img.b64}`;
+            el.alt = img.id;
+            imagesEl.appendChild(el);
+          });
+        }
+      }catch(e){
+        console.warn("Image generation failed:", e);
       }
     }
 
@@ -237,7 +222,7 @@
         topic:   $("#topic").value.trim(),
         pdf_text: $("#pdfText").value.trim(),
         image_descriptions: $("#imageHints").value.trim()
-          ? $("#imageHints").value.trim().split(";")
+          ? $("#imageHints").value.trim().split(";").map(s=>s.trim()).filter(Boolean)
           : []
       };
       statusEl.textContent = "⏳ Génération (sync)…";
@@ -247,6 +232,21 @@
         if (canon) {
           statusEl.textContent = "✅ Leçon générée (sync).";
           renderLesson(canon);
+          await maybeGenerateAndRenderImages(canon);
+          // Tutor messages (first)
+          tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
+          const msgs = canon.first_tutor_messages || [];
+          if(msgs.length){
+            const t = document.createElement("div");
+            t.className = "mono";
+            t.textContent = msgs[0];
+            tutorEl.appendChild(t);
+            const b = document.createElement("button");
+            b.className = "secondary";
+            b.textContent = "Écouter";
+            b.onclick = ()=>speak(msgs[0]);
+            tutorEl.appendChild(b);
+          }
         } else {
           statusEl.textContent = "❌ Réponse inattendue (voir console).";
           console.log("Sync raw response:", resp);
@@ -276,10 +276,23 @@
       try{
         const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
         statusEl.textContent = `Statut: ${resp.status || "?"}`;
-        // Some async response shapes store the lesson under resp.lesson or resp.lesson.lesson
         const canon = normalizeLesson(resp.lesson ? resp : resp);
         if (canon) {
           renderLesson(canon);
+          await maybeGenerateAndRenderImages(canon);
+          tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
+          const msgs = canon.first_tutor_messages || [];
+          if(msgs.length){
+            const t = document.createElement("div");
+            t.className = "mono";
+            t.textContent = msgs[0];
+            tutorEl.appendChild(t);
+            const b = document.createElement("button");
+            b.className = "secondary";
+            b.textContent = "Écouter";
+            b.onclick = ()=>speak(msgs[0]);
+            tutorEl.appendChild(b);
+          }
         } else {
           console.log("Async raw response:", resp);
         }
