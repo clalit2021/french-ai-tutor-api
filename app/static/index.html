@@ -1,305 +1,450 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <title>Parle avec Mimi — Leçon (sync & async)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>French AI Tutor - Mimi</title>
   <style>
-    :root{ --brand:#6a5acd; --bg:#f5f6ff; --card:#fff; --ink:#222; --muted:#666; }
-    *{ box-sizing:border-box }
-    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); }
-    .wrap{ max-width:960px; margin:24px auto; padding:0 16px; }
-    h1{ margin:0 0 16px }
-    h2{ margin:22px 0 10px }
-    label{ display:block; margin-top:10px; font-weight:600 }
-    input, textarea, button{ width:100%; padding:10px 12px; margin-top:6px; font-size:16px }
-    input, textarea{ border:1px solid #dcdced; border-radius:10px; background:#fff }
-    button{ border:0; border-radius:10px; background:var(--brand); color:#fff; cursor:pointer }
-    button.secondary{ background:#e7e7ff; color:#29296a }
-    button.ghost{ background:#fff; color:#29296a; border:1px solid #dcdced }
-    button:disabled{ opacity:.6; cursor:not-allowed }
-    .row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px }
-    .row > *{ flex:1 }
-    .card{ background:var(--card); border:1px solid #ececf6; border-radius:12px; padding:14px; margin-top:14px }
-    .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; white-space:pre-wrap }
-    .plan-item{ border-left:4px solid var(--brand); background:#fbfbff; padding:8px 10px; border-radius:8px; margin:8px 0 }
-    .status{ font-size:14px; color:var(--muted); margin-top:8px }
-    .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#efeefe; border:1px solid #dcdced; font-size:12px; margin-left:8px }
-    .objective{ background:#fbfbff; border:1px solid #ececf6; border-radius:8px; padding:8px 10px; margin:6px 0 }
-    img.thumb{ max-width:200px; margin:6px 8px 0 0; border-radius:8px; border:1px solid #ececf6 }
+    :root { --bg:#f6f7fb; --card:#fff; --ink:#1f2937; --accent:#6c5ce7; --muted:#6b7280; --line:#e6e9ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:linear-gradient(180deg,#eef1ff,#f9fbff); }
+    .wrap { max-width:1100px; margin:32px auto; padding:0 16px; }
+    .title { font-size:28px; font-weight:800; }
+    .sub { color:var(--muted); margin:6px 0 16px; }
+    .panel { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 6px 24px rgba(0,0,0,.04); padding:16px; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .row > * { flex:1 1 auto; }
+    input[type=text], textarea { width:100%; padding:12px 14px; border:1px solid #e5e7eb; border-radius:12px; font-size:15px; }
+    textarea { min-height:90px; }
+    button { background:var(--accent); color:#fff; border:0; padding:12px 16px; border-radius:12px; font-weight:700; cursor:pointer; }
+    button.secondary { background:#eef; color:#2b2f54; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .status { margin:10px 0; font-size:14px; color:var(--muted); }
+    .grid { display:grid; gap:16px; }
+    .cols-2 { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .section { background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px; }
+    .section h3 { margin:0 0 10px 0; font-size:18px; }
+    .badge { display:inline-block; background:#eef; border:1px solid #dfe3ff; color:#333; padding:4px 8px; border-radius:999px; font-size:12px; margin-right:6px; margin-bottom:6px; }
+    .list { margin:0; padding-left:18px; }
+    .item { padding:6px 0; }
+    .plan-block { border:1px dashed #dfe3ff; border-radius:12px; padding:10px; margin-bottom:10px; }
+    .plan-top { display:flex; gap:8px; align-items:center; font-weight:700; }
+    .pill { background:#f3f4ff; border:1px solid #dfe3ff; border-radius:999px; padding:2px 8px; font-size:12px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; background:#f7f7fe; border:1px solid #e6e9ff; border-radius:8px; padding:8px; white-space:pre-wrap; word-break:break-word; }
+    .img { width:100%; border-radius:12px; object-fit:cover; }
+    .q { margin-top:8px; }
+    .q .options { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+    .q .options button { background:#f3f4ff; color:#111; border:1px solid #dfe3ff; }
+    .correct { background:#dcfce7 !important; border-color:#22c55e !important; }
+    .wrong { background:#fee2e2 !important; border-color:#ef4444 !important; }
+    .tabs { display:flex; gap:8px; margin-bottom:10px; }
+    .tab { background:#eef; color:#2b2f54; border:1px solid #dfe3ff; padding:8px 12px; border-radius:999px; cursor:pointer; }
+    .tab.active { background:var(--accent); color:#fff; border-color:transparent; }
+    .small { font-size:12px; color:#6b7280; }
+    code { background:#eef; padding:2px 6px; border-radius:6px; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Parle avec Mimi — Leçon (sync & async)</h1>
+    <div class="title">Parle avec Mimi - Construire une leçon</div>
+    <div class="sub">Choisis une méthode: fichier depuis Supabase (asynchrone) ou plan rapide par sujet (synchrone).</div>
 
-    <div class="card">
-      <h2>Créer une leçon</h2>
-
-      <label for="filePath">Chemin du fichier Supabase</label>
-      <input id="filePath" name="filePath" type="text" placeholder="uploads/x.pdf ou .png" />
-
-      <label for="topic">Sujet (optionnel)</label>
-      <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
-
-      <label for="pdfText">Texte PDF (optionnel)</label>
-      <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
-
-      <label for="imageHints">Descriptions d'images (séparées par ;)</label>
-      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; croissant; Paris skyline" />
-
-      <div class="row">
-        <button id="btnSync">Démarrer la leçon (sync)</button>
-        <button id="btnAsync" class="secondary">Lancer traitement (async)</button>
-        <button id="btnFetch" class="ghost">Récupérer leçon par ID</button>
-      </div>
-
-      <div class="row">
-        <input id="lessonId" name="lessonId" type="text" placeholder="lesson_id (pour async)" />
-      </div>
-
-      <div id="status" class="status"></div>
+    <div class="tabs">
+      <div id="tabAsync" class="tab active">Depuis un fichier (async /api/lessons)</div>
+      <div id="tabSync" class="tab">Plan rapide (sync /api/v2/lesson)</div>
     </div>
 
-    <div id="lessonBox" class="card" style="display:none;">
-      <h2 id="lessonTitle">Nouvelle leçon</h2>
-      <div id="meta"></div>
-      <div id="objectives"></div>
-      <div id="plan"></div>
-      <div id="images"></div>
-      <div id="tutor"></div>
+    <!-- Async panel -->
+    <div id="asyncPanel" class="panel">
+      <div class="row">
+        <input id="filePath" type="text" placeholder="uploads/mon-fichier.pdf ou uploads/page.png" />
+        <button id="startAsyncBtn">Démarrer la leçon</button>
+      </div>
+      <div class="small">Enfant ID (démo): <code id="childId">2e735737-96fc-4d46-8bb9-19f72d8f6215</code></div>
+      <div id="statusAsync" class="status"></div>
     </div>
+
+    <!-- Sync panel -->
+    <div id="syncPanel" class="panel" style="display:none">
+      <div class="grid">
+        <div class="section">
+          <h3>Sujet et texte</h3>
+          <div class="row">
+            <input id="topic" type="text" placeholder="Ex: France et Francophonie" />
+          </div>
+          <div class="row">
+            <textarea id="pdfText" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
+          </div>
+          <div class="row">
+            <input id="imageHints" type="text" placeholder="Indices image (optionnel), ex: Tour Eiffel; baguette" />
+          </div>
+          <div class="row">
+            <button id="startSyncBtn">Construire le plan maintenant</button>
+            <button id="resetBtn" class="secondary">Effacer</button>
+          </div>
+          <div id="statusSync" class="status"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="out" style="margin-top:16px;"></div>
+
+    <p class="small" style="margin-top:12px;">API: <code id="apiBaseShow"></code></p>
   </div>
 
   <script>
-    // -------- Config --------
-    const API_BASE = (window.location.origin && window.location.origin.startsWith("http"))
-      ? window.location.origin
-      : "http://localhost:5000";
-    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // demo
+    // ---- CONFIG ----
+    const API_BASE = "https://french-ai-tutor-api.onrender.com";
+    const CHILD_ID = "2e735737-96fc-4d46-8bb9-19f72d8f6215";
+    document.getElementById("apiBaseShow").textContent = API_BASE;
 
-    // -------- Helpers --------
-    const $  = (s)=>document.querySelector(s);
-    const statusEl   = $("#status");
-    const lessonBox  = $("#lessonBox");
-    const titleEl    = $("#lessonTitle");
-    const metaEl     = $("#meta");
-    const objectivesEl = $("#objectives");
-    const planEl     = $("#plan");
-    const imagesEl   = $("#images");
-    const tutorEl    = $("#tutor");
+    // ---- Tabs ----
+    const tabAsync = document.getElementById("tabAsync");
+    const tabSync  = document.getElementById("tabSync");
+    const asyncPanel = document.getElementById("asyncPanel");
+    const syncPanel  = document.getElementById("syncPanel");
+    tabAsync.onclick = () => { tabAsync.classList.add("active"); tabSync.classList.remove("active"); asyncPanel.style.display=""; syncPanel.style.display="none"; };
+    tabSync.onclick  = () => { tabSync.classList.add("active"); tabAsync.classList.remove("active"); syncPanel.style.display=""; asyncPanel.style.display="none"; };
 
-    async function postJSON(url, data){
-      const r = await fetch(url, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(data)
-      });
-      const txt = await r.text();
-      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
-      return JSON.parse(txt);
+    // ---- Elements ----
+    const el = {
+      filePath: document.getElementById("filePath"),
+      startAsync: document.getElementById("startAsyncBtn"),
+      statusAsync: document.getElementById("statusAsync"),
+      topic: document.getElementById("topic"),
+      pdfText: document.getElementById("pdfText"),
+      imageHints: document.getElementById("imageHints"),
+      startSync: document.getElementById("startSyncBtn"),
+      reset: document.getElementById("resetBtn"),
+      statusSync: document.getElementById("statusSync"),
+      out: document.getElementById("out"),
+    };
+
+    function setStatus(which, msg){ which.textContent = msg; }
+    function clearOut(){ el.out.innerHTML = ""; }
+
+    // ---- HTTP helpers ----
+    async function postJSON(url, body){
+      const r = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
     }
     async function getJSON(url){
       const r = await fetch(url);
-      const txt = await r.text();
-      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
-      return JSON.parse(txt);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }
+    async function postImages(url, prompts){
+      const r = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ image_prompts: prompts }) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
     }
 
-    function unwrapLessonEnvelope(resp){
-      if(!resp) return null;
-      if(resp.lesson && typeof resp.lesson === "object") return resp.lesson;
-      return resp;
-    }
-    function toCanonicalLesson(raw){
-      if(!raw) return null;
-      const L = JSON.parse(JSON.stringify(raw));
-      const title = typeof L.title === "string" ? L.title : "Leçon";
-      const duration = L.duration || "";
-      const objectives = Array.isArray(L.objectives) ? L.objectives : [];
-
-      let plan = [];
-      if (Array.isArray(L.plan)) {
-        plan = L.plan.map(x => ({
-          name: x.name || x.title || "Étape",
-          minutes: x.minutes ?? x.duration ?? "",
-          teacher_script: x.teacher_script || x.script || (Array.isArray(x.steps) ? x.steps.join(" • ") : (x.description || ""))
-        }));
-      }
-
-      let image_prompts = Array.isArray(L.image_prompts) ? L.image_prompts.slice() : [];
-      if (!image_prompts.length && Array.isArray(L.imagePrompts)) {
-        image_prompts = L.imagePrompts.slice();
-      }
-
-      let first_tutor_messages = [];
-      if (Array.isArray(L.first_tutor_messages)) first_tutor_messages = L.first_tutor_messages;
-      else if (Array.isArray(L.firstTutorMessages)) first_tutor_messages = L.firstTutorMessages;
-      else if (title) first_tutor_messages = [`Bonjour ! ${title}`];
-
-      return { title, duration, objectives, plan, image_prompts, first_tutor_messages };
-    }
-    function normalizeLesson(raw){ return toCanonicalLesson(unwrapLessonEnvelope(raw)); }
-
-    function speak(text){
-      try{
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = "fr-FR";
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(u);
-      }catch{}
+    // ---- TTS ----
+    function speak(text, lang="fr-FR", rate=1.0){
+      try { const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = rate; window.speechSynthesis.speak(u); }
+      catch(e){ console.warn("TTS failed", e); }
     }
 
-    function renderLesson(canon){
-      if(!canon) return;
-      lessonBox.style.display = "block";
+    // ---- Renderers ----
+    function renderHeader(lesson){
+      const div = document.createElement("div"); div.className = "section";
+      const h = document.createElement("h3"); h.textContent = (lesson.title || "Leçon"); div.appendChild(h);
 
-      // Title + meta
-      titleEl.textContent = canon.title || "Leçon";
-      metaEl.innerHTML = "";
-      if (canon.duration) {
-        const pill = document.createElement("span");
-        pill.className = "pill";
-        pill.textContent = `Durée: ${canon.duration}`;
-        metaEl.appendChild(pill);
+      const meta = document.createElement("div");
+      const dur = document.createElement("span"); dur.className = "badge"; dur.textContent = "Durée: " + (lesson.duration_minutes || 30) + " min";
+      const lvl = document.createElement("span"); lvl.className = "badge"; lvl.textContent = "Niveau: " + (lesson.level || "A1-A2");
+      const age = document.createElement("span"); age.className = "badge"; age.textContent = "Âge: " + (lesson.age || 11);
+      meta.append(dur, lvl, age); div.appendChild(meta);
+
+      if (lesson.topic_detected){
+        const t = document.createElement("div"); t.style.marginTop = "8px"; t.innerHTML = "<b>Sujet:</b> " + lesson.topic_detected;
+        div.appendChild(t);
       }
 
-      // Objectives
-      objectivesEl.innerHTML = "";
-      if (Array.isArray(canon.objectives) && canon.objectives.length){
-        const h = document.createElement("h3"); h.textContent = "Objectifs";
-        objectivesEl.appendChild(h);
-        canon.objectives.forEach(o=>{
-          const d = document.createElement("div");
-          d.className = "objective";
-          d.textContent = o;
-          objectivesEl.appendChild(d);
-        });
+      if (Array.isArray(lesson.objectives) && lesson.objectives.length){
+        const o = document.createElement("div"); o.style.marginTop = "8px";
+        const h4 = document.createElement("div"); h4.innerHTML = "<b>Objectifs</b>";
+        const ul = document.createElement("ul"); ul.className = "list";
+        lesson.objectives.forEach(it => { const li = document.createElement("li"); li.className = "item"; li.textContent = it; ul.appendChild(li); });
+        o.append(h4, ul); div.appendChild(o);
       }
+      return div;
+    }
 
-      // Plan
-      planEl.innerHTML = "<h3>Plan</h3>";
-      (canon.plan || []).forEach(step=>{
-        const d = document.createElement("div");
-        d.className = "plan-item";
-        d.innerHTML = `<b>${step.name||"Étape"}</b> ${step.minutes?`(${step.minutes})`:""}<br>${step.teacher_script||""}`;
-        planEl.appendChild(d);
+    function renderPlan(lesson){
+      const sec = document.createElement("div"); sec.className = "section";
+      const h = document.createElement("h3"); h.textContent = "Plan en 30 minutes"; sec.appendChild(h);
+      const plan = Array.isArray(lesson.plan) ? lesson.plan : [];
+      if (!plan.length){ sec.appendChild(document.createTextNode("Aucun plan.")); return sec; }
+      plan.forEach((b, idx) => {
+        const blk = document.createElement("div"); blk.className = "plan-block";
+        const top = document.createElement("div"); top.className = "plan-top";
+        const nm = document.createElement("div"); nm.textContent = (idx+1)+". " + (b.name || "Activité");
+        const mn = document.createElement("span"); mn.className = "pill"; mn.textContent = (b.minutes || 5) + " min";
+        top.append(nm, mn); blk.appendChild(top);
+
+        if (b.teacher_script){
+          const p = document.createElement("div"); p.style.marginTop = "6px"; p.innerHTML = "<b>Script professeur:</b>";
+          const pre = document.createElement("div"); pre.className = "mono"; pre.textContent = b.teacher_script;
+          blk.append(p, pre);
+          const btt = document.createElement("button"); btt.className = "secondary"; btt.textContent = "Écouter le début";
+          btt.onclick = () => speak(b.teacher_script.split("\n")[0] || "");
+          blk.appendChild(btt);
+        }
+
+        if (Array.isArray(b.student_actions) && b.student_actions.length){
+          const p = document.createElement("div"); p.style.marginTop = "6px"; p.innerHTML = "<b>Actions élèves:</b>";
+          const ul = document.createElement("ul"); ul.className = "list";
+          b.student_actions.forEach(a => { const li = document.createElement("li"); li.className = "item"; li.textContent = a; ul.appendChild(li); });
+          blk.append(p, ul);
+        }
+
+        if (Array.isArray(b.target_phrases_fr) && b.target_phrases_fr.length){
+          const p = document.createElement("div"); p.style.marginTop = "6px"; p.innerHTML = "<b>Phrases cibles:</b>";
+          const ul = document.createElement("ul"); ul.className = "list";
+          b.target_phrases_fr.forEach(a => { const li = document.createElement("li"); li.className = "item"; li.textContent = a; ul.appendChild(li); });
+          blk.append(p, ul);
+        }
+
+        sec.appendChild(blk);
+      });
+      return sec;
+    }
+
+    function renderSlides(lesson){
+      const sec = document.createElement("div"); sec.className = "section";
+      const h = document.createElement("h3"); h.textContent = "Slides"; sec.appendChild(h);
+      const slides = Array.isArray(lesson.slides) ? lesson.slides : [];
+      if (!slides.length){ sec.appendChild(document.createTextNode("Aucune slide.")); return sec; }
+      slides.forEach(s => {
+        const blk = document.createElement("div"); blk.style.marginBottom = "10px";
+        const t = document.createElement("div"); t.innerHTML = "<b>" + (s.title || "Slide") + "</b>";
+        blk.appendChild(t);
+        if (Array.isArray(s.bullets)){
+          const ul = document.createElement("ul"); ul.className = "list";
+          s.bullets.forEach(b => { const li = document.createElement("li"); li.className = "item"; li.textContent = b; ul.appendChild(li); });
+          blk.appendChild(ul);
+        }
+        if (s.speak_aloud_fr){
+          const q = document.createElement("div"); q.style.marginTop = "4px"; q.innerHTML = "<i>Parle:</i> " + s.speak_aloud_fr;
+          blk.appendChild(q);
+          const btt = document.createElement("button"); btt.className = "secondary"; btt.textContent = "Écouter";
+          btt.onclick = () => speak(s.speak_aloud_fr);
+          blk.appendChild(btt);
+        }
+        sec.appendChild(blk);
+      });
+      return sec;
+    }
+
+    function renderImagePrompts(lesson){
+      const sec = document.createElement("div"); sec.className = "section";
+      const h = document.createElement("h3"); h.textContent = "Prompts d'images"; sec.appendChild(h);
+      const arr = Array.isArray(lesson.image_prompts) ? lesson.image_prompts : [];
+      if (!arr.length){ sec.appendChild(document.createTextNode("Aucun prompt.")); return sec; }
+
+      // list prompts
+      arr.forEach(p => {
+        const d = document.createElement("div"); d.className = "mono"; d.textContent = (p.prompt || "");
+        sec.appendChild(d);
       });
 
-      // Image prompts (text list first)
-      imagesEl.innerHTML = "<h3>Prompts d'images</h3>";
-      (canon.image_prompts || []).forEach((p,i)=>{
-        const d = document.createElement("div");
-        d.className = "mono";
-        d.textContent = p.prompt || "";
-        imagesEl.appendChild(d);
-      });
-    }
+      // gallery container
+      const gallery = document.createElement("div");
+      gallery.style.display = "grid";
+      gallery.style.gridTemplateColumns = "repeat(auto-fill, minmax(180px, 1fr))";
+      gallery.style.gap = "10px";
+      gallery.style.marginTop = "10px";
+      sec.appendChild(gallery);
 
-    async function maybeGenerateAndRenderImages(canon){
-      if (!canon || !Array.isArray(canon.image_prompts) || !canon.image_prompts.length) return;
-      try{
-        const gen = await postJSON(`${API_BASE}/api/v2/generate_images`, { image_prompts: canon.image_prompts });
-        if (Array.isArray(gen.images) && gen.images.length){
-          const h = document.createElement("h3"); h.textContent = "Images";
-          imagesEl.appendChild(h);
-          gen.images.forEach(img=>{
-            const el = document.createElement("img");
-            el.className = "thumb";
-            el.src = `data:image/png;base64,${img.b64}`;
-            el.alt = img.id;
-            imagesEl.appendChild(el);
+      // button to generate images now
+      const row = document.createElement("div");
+      row.style.marginTop = "10px";
+      const btn = document.createElement("button");
+      btn.className = "secondary";
+      btn.textContent = "Générer ces images maintenant";
+      btn.onclick = async () => {
+        btn.disabled = true; btn.textContent = "Génération en cours…";
+        try{
+          const resp = await postImages(API_BASE + "/api/v2/generate_images", arr);
+          const imgs = resp.images || [];
+          if (!imgs.length){ alert("Pas d'images retournées."); }
+          imgs.forEach(im => {
+            const img = document.createElement("img");
+            img.className = "img";
+            img.src = "data:image/png;base64," + im.b64;
+            gallery.appendChild(img);
           });
+          btn.textContent = "Images générées ✓";
+        }catch(e){
+          console.error(e);
+          alert("Erreur images: " + e.message);
+          btn.textContent = "Réessayer";
+          btn.disabled = false;
         }
-      }catch(e){
-        console.warn("Image generation failed:", e);
+      };
+      row.appendChild(btn);
+      sec.appendChild(row);
+
+      return sec;
+    }
+
+    function renderExercises(lesson){
+      const sec = document.createElement("div"); sec.className = "section";
+      const h = document.createElement("h3"); h.textContent = "Exercices"; sec.appendChild(h);
+      const ex = Array.isArray(lesson.exercises) ? lesson.exercises : [];
+      if (!ex.length){ sec.appendChild(document.createTextNode("Aucun exercice.")); return sec; }
+
+      ex.forEach((e, idx) => {
+        const box = document.createElement("div"); box.className = "q";
+        const q = document.createElement("div"); q.innerHTML = "<b>" + (idx+1) + ". " + (e.question_fr || "Question") + "</b>";
+        box.appendChild(q);
+
+        if (e.type === "mcq"){
+          const optWrap = document.createElement("div"); optWrap.className = "options";
+          (e.options || []).forEach((opt, i) => {
+            const btn = document.createElement("button"); btn.textContent = opt;
+            btn.onclick = () => {
+              const correct = (i === (e.answer_index || 0));
+              btn.classList.add(correct ? "correct" : "wrong");
+              if (e.explain_en){ alert(e.explain_en); }
+            };
+            optWrap.appendChild(btn);
+          });
+          box.appendChild(optWrap);
+        } else if (e.type === "fill"){
+          const input = document.createElement("input"); input.type = "text"; input.placeholder = "Ta réponse";
+          const check = document.createElement("button"); check.className = "secondary"; check.textContent = "Vérifier";
+          check.onclick = () => {
+            const ok = (input.value.trim().toLowerCase() === (e.answer_text || "").toLowerCase());
+            input.style.borderColor = ok ? "#22c55e" : "#ef4444";
+            if (e.explain_en){ alert(e.explain_en); }
+          };
+          box.append(input, check);
+        }
+        sec.appendChild(box);
+      });
+      return sec;
+    }
+
+    function renderFirstMessages(lesson){
+      const sec = document.createElement("div"); sec.className = "section";
+      const h = document.createElement("h3"); h.textContent = "Premiers messages du tuteur"; sec.appendChild(h);
+      const arr = Array.isArray(lesson.first_tutor_messages) ? lesson.first_tutor_messages : [];
+      if (!arr.length){ sec.appendChild(document.createTextNode("Aucun.")); return sec; }
+      arr.forEach(m => {
+        const d = document.createElement("div"); d.className = "mono"; d.textContent = m;
+        const btt = document.createElement("button"); btt.className = "secondary"; btt.style.marginTop = "6px"; btt.textContent = "Écouter";
+        btt.onclick = () => speak(m);
+        sec.append(d, btt);
+      });
+      return sec;
+    }
+
+    function renderUIFallback(lesson){
+      const sec = document.createElement("div"); sec.className = "section";
+      const h = document.createElement("h3"); h.textContent = "Cartes rapides"; sec.appendChild(h);
+      const steps = (lesson.ui_steps || []);
+      if (!steps.length){ sec.appendChild(document.createTextNode("Aucune carte.")); return sec; }
+      steps.forEach(s => {
+        const card = document.createElement("div"); card.className = "plan-block";
+        if (s.step){ const p = document.createElement("div"); p.textContent = "👉 " + s.step; card.appendChild(p); }
+        if (s.prompt){
+          const q = document.createElement("div"); q.textContent = "🗣️ " + s.prompt; card.appendChild(q);
+          const btt = document.createElement("button"); btt.className = "secondary"; btt.textContent = "Écouter"; btt.onclick = () => speak(s.prompt);
+          card.appendChild(btt);
+        }
+        sec.appendChild(card);
+      });
+      return sec;
+    }
+
+    function renderLesson(lesson){
+      clearOut();
+      el.out.appendChild(renderHeader(lesson));
+      const grid = document.createElement("div"); grid.className = "grid cols-2";
+      grid.appendChild(renderPlan(lesson));
+      grid.appendChild(renderSlides(lesson));
+      el.out.appendChild(grid);
+      const grid2 = document.createElement("div"); grid2.className = "grid cols-2";
+      grid2.appendChild(renderImagePrompts(lesson));
+      grid2.appendChild(renderExercises(lesson));
+      el.out.appendChild(grid2);
+      el.out.appendChild(renderFirstMessages(lesson));
+      if (Array.isArray(lesson.ui_steps) && lesson.ui_steps.length){
+        el.out.appendChild(renderUIFallback(lesson));
       }
     }
 
-    // -------- Button actions --------
-    $("#btnSync").onclick = async ()=>{
-      const body = {
-        topic:   $("#topic").value.trim(),
-        pdf_text: $("#pdfText").value.trim(),
-        image_descriptions: $("#imageHints").value.trim()
-          ? $("#imageHints").value.trim().split(";").map(s=>s.trim()).filter(Boolean)
-          : []
-      };
-      statusEl.textContent = "⏳ Génération (sync)…";
-      try{
-        const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
-        const canon = normalizeLesson(resp);
-        if (canon) {
-          statusEl.textContent = "✅ Leçon générée (sync).";
-          renderLesson(canon);
-          await maybeGenerateAndRenderImages(canon);
-          // Tutor messages (first)
-          tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
-          const msgs = canon.first_tutor_messages || [];
-          if(msgs.length){
-            const t = document.createElement("div");
-            t.className = "mono";
-            t.textContent = msgs[0];
-            tutorEl.appendChild(t);
-            const b = document.createElement("button");
-            b.className = "secondary";
-            b.textContent = "Écouter";
-            b.onclick = ()=>speak(msgs[0]);
-            tutorEl.appendChild(b);
+    // ---- Async flow (/api/lessons) ----
+    async function pollLesson(lessonId){
+      setStatus(el.statusAsync, "En cours... lesson_id: " + lessonId);
+      const start = Date.now(), TIMEOUT_MS = 120000;
+      while (Date.now() - start < TIMEOUT_MS){
+        await new Promise(r => setTimeout(r, 1500));
+        try{
+          const data = await getJSON(API_BASE + "/api/lessons/" + lessonId);
+          if (data.status === "completed"){
+            setStatus(el.statusAsync, "Terminé");
+            const lesson = (data.lesson && data.lesson.lesson_data) ? data.lesson.lesson_data : (data.lesson || {});
+            renderLesson(lesson);
+            return;
+          } else if (data.status === "error"){
+            setStatus(el.statusAsync, "Erreur pendant la génération.");
+            return;
           }
-        } else {
-          statusEl.textContent = "❌ Réponse inattendue (voir console).";
-          console.log("Sync raw response:", resp);
-        }
-      }catch(e){
-        statusEl.textContent = "❌ " + e.message;
+        }catch(e){ console.warn("poll error", e); }
       }
-    };
+      setStatus(el.statusAsync, "Temps dépassé.");
+    }
 
-    $("#btnAsync").onclick = async ()=>{
-      const file_path = $("#filePath").value.trim();
-      if(!file_path){ alert("Indique un chemin de fichier (uploads/...)"); return; }
-      statusEl.textContent = "⏳ Lancement (async)…";
+    async function startAsync(){
+      const path = el.filePath.value.trim();
+      if (!path){ alert("Entre un chemin de fichier valide"); return; }
+      el.startAsync.disabled = true;
+      setStatus(el.statusAsync, "Envoi...");
+      clearOut();
       try{
-        const r = await postJSON(API_BASE + "/api/lessons", { child_id: childIdDemo, file_path });
-        $("#lessonId").value = r.lesson_id || "";
-        statusEl.textContent = `✅ Tâche lancée. lesson_id: ${r.lesson_id}`;
+        const resp = await postJSON(API_BASE + "/api/lessons", { child_id: CHILD_ID, file_path: path });
+        if (resp.lesson_id){ pollLesson(resp.lesson_id); }
+        else { setStatus(el.statusAsync, "Erreur: pas de lesson_id"); }
       }catch(e){
-        statusEl.textContent = "❌ " + e.message;
+        setStatus(el.statusAsync, "Erreur API: " + e.message);
+      }finally{
+        el.startAsync.disabled = false;
       }
-    };
+    }
 
-    $("#btnFetch").onclick = async ()=>{
-      const id = $("#lessonId").value.trim();
-      if(!id){ alert("Saisis un lesson_id"); return; }
-      statusEl.textContent = "⏳ Lecture de la leçon…";
+    // ---- Sync flow (/api/v2/lesson) ----
+    async function startSync(){
+      const topic = el.topic.value.trim();
+      const pdfText = el.pdfText.value.trim();
+      const imgHints = el.imageHints.value.trim();
+      const image_descriptions = imgHints ? imgHints.split(";").map(s => s.trim()).filter(Boolean) : [];
+      el.startSync.disabled = true;
+      setStatus(el.statusSync, "Génération en cours...");
+      clearOut();
       try{
-        const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
-        statusEl.textContent = `Statut: ${resp.status || "?"}`;
-        const canon = normalizeLesson(resp.lesson ? resp : resp);
-        if (canon) {
-          renderLesson(canon);
-          await maybeGenerateAndRenderImages(canon);
-          tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
-          const msgs = canon.first_tutor_messages || [];
-          if(msgs.length){
-            const t = document.createElement("div");
-            t.className = "mono";
-            t.textContent = msgs[0];
-            tutorEl.appendChild(t);
-            const b = document.createElement("button");
-            b.className = "secondary";
-            b.textContent = "Écouter";
-            b.onclick = ()=>speak(msgs[0]);
-            tutorEl.appendChild(b);
-          }
-        } else {
-          console.log("Async raw response:", resp);
-        }
+        const resp = await postJSON(API_BASE + "/api/v2/lesson", { topic, pdf_text: pdfText, image_descriptions, age: 11 });
+        if (resp.lesson){ renderLesson(resp.lesson); setStatus(el.statusSync, "Terminé"); }
+        else { setStatus(el.statusSync, "Erreur: réponse invalide"); }
       }catch(e){
-        statusEl.textContent = "❌ " + e.message;
+        setStatus(el.statusSync, "Erreur API: " + e.message);
+      }finally{
+        el.startSync.disabled = false;
       }
-    };
+    }
+
+    function resetSync(){
+      el.topic.value = ""; el.pdfText.value = ""; el.imageHints.value = "";
+      setStatus(el.statusSync, ""); clearOut();
+    }
+
+    // ---- Bind ----
+    el.startAsync.onclick = startAsync;
+    el.startSync.onclick = startSync;
+    el.reset.onclick = resetSync;
   </script>
 </body>
 </html>
