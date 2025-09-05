@@ -15,12 +15,19 @@ services:
       - key: CELERY_BROKER_URL
         sync: false
 
-  - type: worker
+    - type: worker
     name: french-ai-tutor-worker
     env: docker
     plan: starter
     autoDeploy: true
-    startCommand: celery -A app.tasks.celery_app worker -P solo --loglevel=info
+    dockerCommand:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - worker
+      - -P
+      - solo
+      - --loglevel=info
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -30,3 +37,4 @@ services:
         sync: false
       - key: CELERY_BROKER_URL
         sync: false
+
