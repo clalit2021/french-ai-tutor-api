@@ -87,7 +87,8 @@ def create_lesson():
         if not res.data:
             return jsonify({"error": "insert failed"}), 500
         lesson_id = res.data[0]["id"]
-        # TODO: enqueue Celery: process_lesson.delay(str(lesson_id), file_path, str(child_id))
+        # TODO: enqueue Celery here if you use a worker:
+        # process_lesson.delay(str(lesson_id), file_path, str(child_id))
         return jsonify({"lesson_id": lesson_id, "status": "processing"}), 202
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -128,6 +129,9 @@ Rules:
 - No extra keys.
 - No code fences.
 - No prose outside JSON.
+- Make language simple and encouraging; short sentences; playful tone.
+- Include speaking aloud, call-and-response, mini-games, and a creative wrap-up.
+- Provide 5–8 kid-safe image prompts (no brands, no text in-image, no real faces).
 """
 
 @app.post("/api/v2/lesson")
