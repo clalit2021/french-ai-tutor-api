@@ -24,6 +24,8 @@
     .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; white-space:pre-wrap }
     .plan-item{ border-left:4px solid var(--brand); background:#fbfbff; padding:8px 10px; border-radius:8px; margin:8px 0 }
     .status{ font-size:14px; color:var(--muted); margin-top:8px }
+    .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#efeefe; border:1px solid #dcdced; font-size:12px; margin-left:8px }
+    .objective{ background:#fbfbff; border:1px solid #ececf6; border-radius:8px; padding:8px 10px; margin:6px 0 }
   </style>
 </head>
 <body>
@@ -59,7 +61,9 @@
     </div>
 
     <div id="lessonBox" class="card" style="display:none;">
-      <h2>Nouvelle leçon</h2>
+      <h2 id="lessonTitle">Nouvelle leçon</h2>
+      <div id="meta"></div>
+      <div id="objectives"></div>
       <div id="plan"></div>
       <div id="images"></div>
       <div id="tutor"></div>
@@ -68,7 +72,7 @@
 
   <script>
     // -------- Config --------
-    // Safe fallback: if opened via file://, use localhost:5000 (your Flask server).
+    // Safe fallback if opened via file:// — uses your local Flask server.
     const API_BASE = (window.location.origin && window.location.origin.startsWith("http"))
       ? window.location.origin
       : "http://localhost:5000";
@@ -79,11 +83,14 @@
 
     // -------- Helpers --------
     const $  = (s)=>document.querySelector(s);
-    const statusEl  = $("#status");
-    const lessonBox = $("#lessonBox");
-    const planEl    = $("#plan");
-    const imagesEl  = $("#images");
-    const tutorEl   = $("#tutor");
+    const statusEl   = $("#status");
+    const lessonBox  = $("#lessonBox");
+    const titleEl    = $("#lessonTitle");
+    const metaEl     = $("#meta");
+    const objectivesEl = $("#objectives");
+    const planEl     = $("#plan");
+    const imagesEl   = $("#images");
+    const tutorEl    = $("#tutor");
 
     async function postJSON(url, data){
       const r = await fetch(url, {
@@ -103,55 +110,54 @@
       return JSON.parse(txt);
     }
 
-    // -------- Unwrap different response shapes --------
+    // -------- Envelope unwrap --------
     function unwrapLessonEnvelope(resp){
       if(!resp) return null;
-      if(resp.lesson && resp.lesson.lesson) return resp.lesson.lesson; // { lesson: { lesson: {...} } }
-      if(resp.lesson) return resp.lesson;                               // { lesson: {...} }
-      return resp;                                                      // direct fields (dev mode)
+      if(resp.lesson && typeof resp.lesson === "object") return resp.lesson;
+      return resp;
     }
 
-    // -------- Convert any model schema to the UI schema --------
+    // -------- Canonicalize to expected UI schema --------
     function toCanonicalLesson(raw){
       if(!raw) return null;
+      // Backend now returns strict JSON keys:
+      // title, duration, objectives[], plan[], image_prompts[], first_tutor_messages[]
       const L = JSON.parse(JSON.stringify(raw));
+
+      const title = typeof L.title === "string" ? L.title : "Leçon";
+      const duration = L.duration || "";
+      const objectives = Array.isArray(L.objectives) ? L.objectives : [];
 
       // PLAN
       let plan = [];
       if (Array.isArray(L.plan)) {
         plan = L.plan.map(x => ({
           name: x.name || x.title || "Étape",
-          minutes: x.minutes || x.duration_minutes || x.duration || "",
-          teacher_script: x.teacher_script || x.teacherScript || x.script || (Array.isArray(x.steps) ? x.steps.join(" • ") : (x.description || ""))
-        }));
-      } else if (Array.isArray(L.activities)) {
-        plan = L.activities.map(a => ({
-          name: a.name || a.title || "Étape",
-          minutes: a.minutes || a.duration_minutes || a.duration || "",
-          teacher_script: a.teacher_script || a.teacherScript || a.script || (Array.isArray(a.steps) ? a.steps.join(" • ") : (a.description || ""))
+          minutes: x.minutes ?? x.duration ?? "",
+          teacher_script: x.teacher_script || x.script || (Array.isArray(x.steps) ? x.steps.join(" • ") : (x.description || ""))
         }));
       }
 
       // IMAGE PROMPTS
-      let image_prompts = [];
-      if (Array.isArray(L.image_prompts)) image_prompts = L.image_prompts;
-      else if (Array.isArray(L.imagePrompts)) image_prompts = L.imagePrompts;
-      else if (Array.isArray(L.slides)) {
-        image_prompts = L.slides.filter(s => s && s.prompt).map(s => ({ id: s.id || "", prompt: s.prompt }));
+      let image_prompts = Array.isArray(L.image_prompts) ? L.image_prompts.slice() : [];
+      if (!image_prompts.length && Array.isArray(L.imagePrompts)) {
+        image_prompts = L.imagePrompts.slice();
       }
 
       // FIRST TUTOR MESSAGES
       let first_tutor_messages = [];
       if (Array.isArray(L.first_tutor_messages)) first_tutor_messages = L.first_tutor_messages;
       else if (Array.isArray(L.firstTutorMessages)) first_tutor_messages = L.firstTutorMessages;
-      else if (typeof L.title === "string") first_tutor_messages = [`Bonjour ! ${L.title}`];
+      else if (title) first_tutor_messages = [`Bonjour ! ${title}`];
 
-      return { plan, image_prompts, first_tutor_messages };
+      return { title, duration, objectives, plan, image_prompts, first_tutor_messages };
     }
 
-    // ---- Compatibility shim (fixes "normalizeLesson is not defined")
+    // ---- Compatibility shim
     function normalizeLesson(raw){
-      return toCanonicalLesson(raw);
+      // Accept both shapes: {lesson:{...}} or {...}
+      const unwrapped = unwrapLessonEnvelope(raw);
+      return toCanonicalLesson(unwrapped);
     }
 
     function speak(text){
@@ -167,6 +173,29 @@
       if(!canon) return;
       lessonBox.style.display = "block";
 
+      // Title + meta
+      titleEl.textContent = canon.title || "Leçon";
+      metaEl.innerHTML = "";
+      if (canon.duration) {
+        const pill = document.createElement("span");
+        pill.className = "pill";
+        pill.textContent = `Durée: ${canon.duration}`;
+        metaEl.appendChild(pill);
+      }
+
+      // Objectives
+      objectivesEl.innerHTML = "";
+      if (Array.isArray(canon.objectives) && canon.objectives.length){
+        const h = document.createElement("h3"); h.textContent = "Objectifs";
+        objectivesEl.appendChild(h);
+        canon.objectives.forEach(o=>{
+          const d = document.createElement("div");
+          d.className = "objective";
+          d.textContent = o;
+          objectivesEl.appendChild(d);
+        });
+      }
+
       // Plan
       planEl.innerHTML = "<h3>Plan</h3>";
       (canon.plan || []).forEach(step=>{
@@ -178,7 +207,7 @@
 
       // Image prompts
       imagesEl.innerHTML = "<h3>Prompts d'images</h3>";
-      (canon.image_prompts || []).forEach(p=>{
+      (canon.image_prompts || []).forEach((p,i)=>{
         const d = document.createElement("div");
         d.className = "mono";
         d.textContent = p.prompt || "";
@@ -214,14 +243,13 @@
       statusEl.textContent = "⏳ Génération (sync)…";
       try{
         const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
-        const lessonRaw = unwrapLessonEnvelope(resp);
-        const canon = normalizeLesson(lessonRaw);
+        const canon = normalizeLesson(resp);
         if (canon) {
           statusEl.textContent = "✅ Leçon générée (sync).";
           renderLesson(canon);
         } else {
           statusEl.textContent = "❌ Réponse inattendue (voir console).";
-          console.log("Sync raw response:", resp, lessonRaw);
+          console.log("Sync raw response:", resp);
         }
       }catch(e){
         statusEl.textContent = "❌ " + e.message;
@@ -248,12 +276,12 @@
       try{
         const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
         statusEl.textContent = `Statut: ${resp.status || "?"}`;
-        const lessonRaw = unwrapLessonEnvelope(resp);
-        const canon = normalizeLesson(lessonRaw);
+        // Some async response shapes store the lesson under resp.lesson or resp.lesson.lesson
+        const canon = normalizeLesson(resp.lesson ? resp : resp);
         if (canon) {
           renderLesson(canon);
         } else {
-          console.log("Async raw response:", resp, lessonRaw);
+          console.log("Async raw response:", resp);
         }
       }catch(e){
         statusEl.textContent = "❌ " + e.message;
