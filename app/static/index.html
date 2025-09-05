@@ -68,10 +68,13 @@
 
   <script>
     // -------- Config --------
-    // By default, call the same origin you're serving from.
-    // Override to your Render URL if needed:
+    // Safe fallback: if opened via file://, use localhost:5000 (your Flask server).
+    const API_BASE = (window.location.origin && window.location.origin.startsWith("http"))
+      ? window.location.origin
+      : "http://localhost:5000";
+    // Or hardcode your deployed API:
     // const API_BASE = "https://french-ai-tutor-api.onrender.com";
-    const API_BASE = window.location.origin;
+
     const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // demo
 
     // -------- Helpers --------
@@ -103,12 +106,9 @@
     // -------- Unwrap different response shapes --------
     function unwrapLessonEnvelope(resp){
       if(!resp) return null;
-      // { lesson: { lesson: {...} } }
-      if(resp.lesson && resp.lesson.lesson) return resp.lesson.lesson;
-      // { lesson: {...} }
-      if(resp.lesson) return resp.lesson;
-      // direct lesson fields (dev mode)
-      return resp;
+      if(resp.lesson && resp.lesson.lesson) return resp.lesson.lesson; // { lesson: { lesson: {...} } }
+      if(resp.lesson) return resp.lesson;                               // { lesson: {...} }
+      return resp;                                                      // direct fields (dev mode)
     }
 
     // -------- Convert any model schema to the UI schema --------
