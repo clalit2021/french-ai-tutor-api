@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: french-ai-tutor-web
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+
+  - type: worker
+    name: french-ai-tutor-worker
+    env: docker
+    plan: starter
+    autoDeploy: true
+    startCommand: celery -A app.tasks.celery_app worker -P solo --loglevel=info
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false

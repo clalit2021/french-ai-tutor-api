@@ -4,3 +4,6 @@
 *.pyd
 .env
 .env.*
+
+__pycache__/
+*.pyc
