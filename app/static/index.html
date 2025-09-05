@@ -2,132 +2,192 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <title>Parle avec Mimi — Démarrer une leçon</title>
+  <title>Parle avec Mimi — Leçon (sync & async)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      background: #f5f6ff;
-      margin: 0;
-      padding: 20px;
-      color: #222;
-    }
-    h1 { color:#333; }
-    input, textarea {
-      width: 100%;
-      padding: 10px;
-      margin: 6px 0;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-    }
-    button {
-      background: #6a5acd;
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      margin-top: 8px;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    button:disabled { opacity:0.6; cursor:not-allowed; }
-    .card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 14px;
-      margin-top: 16px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.08);
-    }
-    .mono { font-family: monospace; font-size: 14px; white-space: pre-wrap; }
-    .gallery {
-      display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px;
-    }
-    .gallery img { width:100%; border-radius:8px; }
+    :root{ --brand:#6a5acd; --bg:#f5f6ff; --card:#fff; --ink:#222; --muted:#666; }
+    *{ box-sizing:border-box }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); }
+    .wrap{ max-width:960px; margin:24px auto; padding:0 16px; }
+    h1{ margin:0 0 16px }
+    h2{ margin:22px 0 10px }
+    label{ display:block; margin-top:10px; font-weight:600 }
+    input, textarea, button{ width:100%; padding:10px 12px; margin-top:6px; font-size:16px }
+    input, textarea{ border:1px solid #dcdced; border-radius:10px; background:#fff }
+    button{ border:0; border-radius:10px; background:var(--brand); color:#fff; cursor:pointer }
+    button.secondary{ background:#e7e7ff; color:#29296a }
+    button.ghost{ background:#fff; color:#29296a; border:1px solid #dcdced }
+    button:disabled{ opacity:.6; cursor:not-allowed }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px }
+    .row > *{ flex:1 }
+    .card{ background:var(--card); border:1px solid #ececf6; border-radius:12px; padding:14px; margin-top:14px }
+    .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; white-space:pre-wrap }
+    .plan-item{ border-left:4px solid var(--brand); background:#fbfbff; padding:8px 10px; border-radius:8px; margin:8px 0 }
+    .status{ font-size:14px; color:var(--muted); margin-top:8px }
   </style>
 </head>
 <body>
-  <h1>Parle avec Mimi — Démarrer une leçon</h1>
+  <div class="wrap">
+    <h1>Parle avec Mimi — Leçon (sync & async)</h1>
 
-  <div class="card">
-    <label>Chemin du fichier Supabase:</label>
-    <input id="filePath" placeholder="uploads/Screenshot.png" />
+    <div class="card">
+      <h2>Créer une leçon</h2>
 
-    <label>Sujet (optionnel):</label>
-    <input id="topic" placeholder="Ex: France et Francophonie" />
+      <label for="filePath">Chemin du fichier Supabase</label>
+      <input id="filePath" name="filePath" type="text" placeholder="uploads/Screenshot 2025-09-02 191857.png" />
 
-    <label>Texte PDF (optionnel):</label>
-    <textarea id="pdfText" rows="3" placeholder="Colle ici un extrait de texte OCR..."></textarea>
+      <label for="topic">Sujet (optionnel)</label>
+      <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
 
-    <label>Descriptions d'images (séparées par ;) :</label>
-    <input id="imageHints" placeholder="Ex: Tour Eiffel; baguette" />
+      <label for="pdfText">Texte PDF (optionnel)</label>
+      <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
 
-    <button id="btnStart">Démarrer la leçon</button>
-    <div id="status"></div>
-  </div>
+      <label for="imageHints">Descriptions d'images (séparées par ;)</label>
+      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; baguette" />
 
-  <div id="lessonBox" class="card" style="display:none;">
-    <h2>Nouvelle leçon</h2>
-    <div id="plan"></div>
-    <div id="images"></div>
-    <div id="tutor"></div>
+      <div class="row">
+        <button id="btnSync">Démarrer la leçon (sync)</button>
+        <button id="btnAsync" class="secondary">Lancer traitement (async)</button>
+        <button id="btnFetch" class="ghost">Récupérer leçon par ID</button>
+      </div>
+
+      <div class="row">
+        <input id="lessonId" name="lessonId" type="text" placeholder="lesson_id (pour async)" />
+      </div>
+
+      <div id="status" class="status"></div>
+    </div>
+
+    <div id="lessonBox" class="card" style="display:none;">
+      <h2>Nouvelle leçon</h2>
+      <div id="plan"></div>
+      <div id="images"></div>
+      <div id="tutor"></div>
+    </div>
   </div>
 
   <script>
     const API_BASE = "https://french-ai-tutor-api.onrender.com";
-    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215";
+    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // démo
 
-    const $ = sel => document.querySelector(sel);
+    const $ = (s)=>document.querySelector(s);
     const statusEl = $("#status");
+    const lessonBox = $("#lessonBox");
+    const planEl = $("#plan");
+    const imagesEl = $("#images");
+    const tutorEl = $("#tutor");
+
+    function speak(text){
+      try{
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = "fr-FR";
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      }catch{}
+    }
 
     function renderLesson(lesson){
-      $("#lessonBox").style.display = "block";
+      lessonBox.style.display = "block";
+
       // Plan
-      let planHtml = "<h3>Plan</h3>";
-      (lesson.plan || []).forEach(s=>{
-        planHtml += `<div><b>${s.name||""}</b> (${s.minutes||""} min)<br>${s.teacher_script||""}</div>`;
+      planEl.innerHTML = "<h3>Plan</h3>";
+      (lesson.plan || []).forEach(step=>{
+        const d = document.createElement("div");
+        d.className = "plan-item";
+        d.innerHTML = `<b>${step.name||"Étape"}</b> (${step.minutes||""} min)<br>${step.teacher_script||""}`;
+        planEl.appendChild(d);
       });
-      $("#plan").innerHTML = planHtml;
 
       // Image prompts
-      let imgHtml = "<h3>Prompts d'images</h3>";
+      imagesEl.innerHTML = "<h3>Prompts d'images</h3>";
       (lesson.image_prompts || []).forEach(p=>{
-        imgHtml += `<div class="mono">${p.prompt}</div>`;
+        const d = document.createElement("div");
+        d.className = "mono";
+        d.textContent = p.prompt || "";
+        imagesEl.appendChild(d);
       });
-      $("#images").innerHTML = imgHtml;
 
-      // Tutor first message
-      const arr = lesson.first_tutor_messages || [];
-      if(arr.length){
-        $("#tutor").innerHTML = `<h3>Premiers messages du tuteur</h3><div>${arr[0]}</div>
-          <button onclick="speak('${arr[0]}')">Écouter</button>`;
+      // First tutor message
+      const msgs = lesson.first_tutor_messages || [];
+      tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
+      if(msgs.length){
+        const t = document.createElement("div");
+        t.className = "mono";
+        t.textContent = msgs[0];
+        tutorEl.appendChild(t);
+
+        const b = document.createElement("button");
+        b.className = "secondary";
+        b.textContent = "Écouter";
+        b.onclick = ()=>speak(msgs[0]);
+        tutorEl.appendChild(b);
       }
     }
 
-    function speak(text){
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = "fr-FR";
-      window.speechSynthesis.speak(u);
+    async function postJSON(url, data){
+      const r = await fetch(url, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(data)
+      });
+      const txt = await r.text();
+      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
+      return JSON.parse(txt);
     }
 
-    $("#btnStart").onclick = async ()=>{
+    async function getJSON(url){
+      const r = await fetch(url);
+      const txt = await r.text();
+      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
+      return JSON.parse(txt);
+    }
+
+    // ---- Buttons ----
+    $("#btnSync").onclick = async ()=>{
       const body = {
         topic: $("#topic").value.trim(),
         pdf_text: $("#pdfText").value.trim(),
-        image_descriptions: $("#imageHints").value.trim() ? $("#imageHints").value.split(";") : []
+        image_descriptions: $("#imageHints").value.trim() ? $("#imageHints").value.trim().split(";") : []
       };
-      statusEl.textContent = "⏳ En cours...";
+      statusEl.textContent = "⏳ Génération (sync)…";
       try{
-        const r = await fetch(API_BASE + "/api/v2/lesson", {
-          method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify(body)
-        });
-        const data = await r.json();
-        if(data.lesson){
-          statusEl.textContent = "✅ Terminé";
-          renderLesson(data.lesson);
+        const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
+        if(resp.lesson){
+          statusEl.textContent = "✅ Leçon générée (sync).";
+          renderLesson(resp.lesson);
         }else{
-          statusEl.textContent = "❌ Erreur: " + JSON.stringify(data);
+          statusEl.textContent = "❌ Pas de leçon: " + JSON.stringify(resp);
         }
       }catch(e){
-        statusEl.textContent = "❌ Exception: " + e.message;
+        statusEl.textContent = "❌ " + e.message;
+      }
+    };
+
+    $("#btnAsync").onclick = async ()=>{
+      const file_path = $("#filePath").value.trim();
+      if(!file_path){ alert("Indique un chemin de fichier (uploads/...)"); return; }
+      statusEl.textContent = "⏳ Lancement (async)…";
+      try{
+        const r = await postJSON(API_BASE + "/api/lessons", { child_id: childIdDemo, file_path });
+        $("#lessonId").value = r.lesson_id || "";
+        statusEl.textContent = `✅ Tâche lancée. lesson_id: ${r.lesson_id}`;
+      }catch(e){
+        statusEl.textContent = "❌ " + e.message;
+      }
+    };
+
+    $("#btnFetch").onclick = async ()=>{
+      const id = $("#lessonId").value.trim();
+      if(!id){ alert("Saisis un lesson_id"); return; }
+      statusEl.textContent = "⏳ Lecture de la leçon…";
+      try{
+        const r = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
+        statusEl.textContent = `Statut: ${r.status || "?"}`;
+        if(r.lesson && r.lesson.lesson_data){
+          renderLesson(r.lesson.lesson_data);
+        }
+      }catch(e){
+        statusEl.textContent = "❌ " + e.message;
       }
     };
   </script>
