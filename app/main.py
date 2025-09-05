@@ -5,9 +5,44 @@ from flask_cors import CORS
 from supabase import create_client, Client
 from app.tasks import process_lesson  # Celery task
 from app.tutor_sync import bp as tutor_sync_bp
+from openai import OpenAI
 
 app = Flask(__name__)
 CORS(app)
+
+# --- Image generation route (direct) ---
+OPENAI_MODEL_IMAGE = os.getenv("OPENAI_MODEL_IMAGE", "gpt-image-1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+@app.route("/api/v2/generate_images", methods=["POST"])
+def generate_images_v2():
+    """
+    Body: { "image_prompts": [{"id":"img1","prompt":"..."}] }
+    Returns: { "images": [{"id":"img1","b64":"..."}] }
+    """
+    if not OPENAI_API_KEY:
+        return jsonify({"error": "OPENAI_API_KEY not configured"}), 500
+
+    body = request.get_json(force=True, silent=True) or {}
+    prompts = body.get("image_prompts", []) or []
+    out = []
+    try:
+        for p in prompts:
+            prompt = (p or {}).get("prompt", "")
+            if not prompt:
+                continue
+            img = openai_client.images.generate(
+                model=OPENAI_MODEL_IMAGE,
+                prompt=prompt,
+                size="1024x1024"
+            )
+            b64 = img.data[0].b64_json
+            out.append({"id": p.get("id", ""), "b64": b64})
+        return jsonify({"images": out})
+    except Exception as e:
+        # Return the error text so the frontend can display it
+        return jsonify({"error": str(e)}), 500
 
 # ---- Register blueprints ----
 app.register_blueprint(tutor_sync_bp, url_prefix="/api/tutor_sync")
