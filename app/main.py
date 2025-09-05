@@ -60,11 +60,20 @@ def root():
     return app.send_static_file("index.html")
 
 # ---------------------- ASYNC: lessons table pipeline -----------------------
+from datetime import datetime
+from flask import jsonify, request
+
+# safe import of the celery task (no crash if celery not installed)
+try:
+    from app.tasks import process_lesson
+except Exception:
+    process_lesson = None
+
 @app.post("/api/lessons")
 def create_lesson():
     """
-    Body: { "child_id": "<uuid>", "file_path": "uploads/file.png" }
-    Creates a row in lessons(status='processing'). In production you'd enqueue Celery here.
+    Body: { "child_id": "<id>", "file_path": "uploads/file.png" }
+    Creates a row in lessons(status='processing') and enqueues Celery if available.
     """
     if not supabase:
         return jsonify({"error": "Supabase not configured"}), 500
@@ -76,22 +85,34 @@ def create_lesson():
     if not child_id or not file_path:
         return jsonify({"error": "child_id and file_path required"}), 400
 
+    # Write to the current column name; include legacy mirror only if your DB still has it
     ins = {
         "child_id": child_id,
-        "uploaded_file_path": file_path,
+        "file_path": file_path,                    # ✅ current schema
+        # "uploaded_file_path": file_path,        # (uncomment ONLY if you kept the legacy column)
         "status": "processing",
         "created_at": datetime.utcnow().isoformat()
     }
+
     try:
         res = supabase.table("lessons").insert(ins).execute()
         if not res.data:
             return jsonify({"error": "insert failed"}), 500
         lesson_id = res.data[0]["id"]
-        # TODO: enqueue Celery here if you use a worker:
-        # process_lesson.delay(str(lesson_id), file_path, str(child_id))
-        return jsonify({"lesson_id": lesson_id, "status": "processing"}), 202
+
+        # Enqueue background processing if celery task is available
+        if process_lesson:
+            try:
+                process_lesson.delay(str(lesson_id), file_path, str(child_id))
+            except Exception as e:
+                # Log but don't fail the request; client can still poll the row
+                print("[WARN] Failed to enqueue Celery:", e)
+
+        return jsonify({"ok": True, "lesson_id": lesson_id, "status": "processing"}), 202
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.get("/api/lessons/<lesson_id>")
 def get_lesson(lesson_id):
@@ -101,7 +122,14 @@ def get_lesson(lesson_id):
         res = supabase.table("lessons").select("*").eq("id", lesson_id).execute()
         if not res.data:
             return jsonify({"error": "not found"}), 404
-        return jsonify(res.data[0])
+        # Normalize shape to what your frontend expects
+        row = res.data[0]
+        return jsonify({
+            "ok": True,
+            "id": row.get("id"),
+            "status": row.get("status"),
+            "lesson": row  # includes lesson_data, ocr_text, etc.
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
