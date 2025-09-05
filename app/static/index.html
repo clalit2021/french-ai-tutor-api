@@ -69,7 +69,7 @@
   <script>
     // -------- Config --------
     const API_BASE = "https://french-ai-tutor-api.onrender.com";
-    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // votre enfant démo
+    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // démo
 
     // -------- Helpers --------
     const $  = (s)=>document.querySelector(s);
@@ -97,23 +97,54 @@
       return JSON.parse(txt);
     }
 
-    // Accept multiple backend response shapes and always return the actual lesson object.
-    function normalizeLesson(resp) {
-      if (!resp) return null;
+    // -------- Unwrap different response shapes --------
+    function unwrapLessonEnvelope(resp){
+      if(!resp) return null;
+      // { lesson: { lesson: {...} } }
+      if(resp.lesson && resp.lesson.lesson) return resp.lesson.lesson;
+      // { lesson: {...} }
+      if(resp.lesson) return resp.lesson;
+      // direct lesson fields (dev mode)
+      return resp;
+    }
 
-      // /api/v2/lesson — { lesson: {...} }
-      if (resp.lesson && !resp.lesson.lesson_data) return resp.lesson;
+    // -------- Convert any model schema to the UI schema --------
+    function toCanonicalLesson(raw){
+      if(!raw) return null;
+      const L = JSON.parse(JSON.stringify(raw)); // shallow clone
 
-      // /api/lessons/<id> — { lesson: { lesson_data: {...} } }
-      if (resp.lesson && resp.lesson.lesson_data) return resp.lesson.lesson_data;
+      // PLAN
+      let plan = [];
+      if (Array.isArray(L.plan)) {
+        plan = L.plan.map(x => ({
+          name: x.name || x.title || "Étape",
+          minutes: x.minutes || x.duration_minutes || x.duration || "",
+          teacher_script: x.teacher_script || x.teacherScript || x.script || (Array.isArray(x.steps) ? x.steps.join(" • ") : (x.description || ""))
+        }));
+      } else if (Array.isArray(L.activities)) {
+        plan = L.activities.map(a => ({
+          name: a.name || a.title || "Étape",
+          minutes: a.minutes || a.duration_minutes || a.duration || "",
+          teacher_script: a.teacher_script || a.teacherScript || a.script || (Array.isArray(a.steps) ? a.steps.join(" • ") : (a.description || ""))
+        }));
+      }
 
-      // rare double nesting — { lesson: { lesson: {...} } }
-      if (resp.lesson && resp.lesson.lesson) return resp.lesson.lesson;
+      // IMAGE PROMPTS
+      let image_prompts = [];
+      if (Array.isArray(L.image_prompts)) image_prompts = L.image_prompts;
+      else if (Array.isArray(L.imagePrompts)) image_prompts = L.imagePrompts;
+      else if (Array.isArray(L.slides)) {
+        // Sometimes slide bullets include prompts; take any 'prompt' fields
+        image_prompts = L.slides.filter(s => s && s.prompt).map(s => ({ id: s.id || "", prompt: s.prompt }));
+      }
 
-      // dev shape — lesson fields at top level
-      if (resp.plan || resp.image_prompts || resp.first_tutor_messages) return resp;
+      // FIRST TUTOR MESSAGES
+      let first_tutor_messages = [];
+      if (Array.isArray(L.first_tutor_messages)) first_tutor_messages = L.first_tutor_messages;
+      else if (Array.isArray(L.firstTutorMessages)) first_tutor_messages = L.firstTutorMessages;
+      else if (typeof L.title === "string") first_tutor_messages = [`Bonjour ! ${L.title}`];
 
-      return null;
+      return { plan, image_prompts, first_tutor_messages };
     }
 
     function speak(text){
@@ -125,22 +156,22 @@
       }catch{}
     }
 
-    function renderLesson(lesson){
-      if(!lesson) return;
+    function renderLesson(canon){
+      if(!canon) return;
       lessonBox.style.display = "block";
 
       // Plan
       planEl.innerHTML = "<h3>Plan</h3>";
-      (lesson.plan || []).forEach(step=>{
+      (canon.plan || []).forEach(step=>{
         const d = document.createElement("div");
         d.className = "plan-item";
-        d.innerHTML = `<b>${step.name||"Étape"}</b> (${step.minutes||""} min)<br>${step.teacher_script||""}`;
+        d.innerHTML = `<b>${step.name||"Étape"}</b> ${step.minutes?`(${step.minutes})`:""}<br>${step.teacher_script||""}`;
         planEl.appendChild(d);
       });
 
       // Image prompts
       imagesEl.innerHTML = "<h3>Prompts d'images</h3>";
-      (lesson.image_prompts || []).forEach(p=>{
+      (canon.image_prompts || []).forEach(p=>{
         const d = document.createElement("div");
         d.className = "mono";
         d.textContent = p.prompt || "";
@@ -149,7 +180,7 @@
 
       // First tutor message
       tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
-      const msgs = lesson.first_tutor_messages || [];
+      const msgs = canon.first_tutor_messages || [];
       if(msgs.length){
         const t = document.createElement("div");
         t.className = "mono";
@@ -176,13 +207,14 @@
       statusEl.textContent = "⏳ Génération (sync)…";
       try{
         const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
-        const lessonObj = normalizeLesson(resp);
-        if (lessonObj) {
+        const lessonRaw = unwrapLessonEnvelope(resp);
+        const canon = toCanonicalLesson(lessonRaw);
+        if (canon) {
           statusEl.textContent = "✅ Leçon générée (sync).";
-          renderLesson(lessonObj);
+          renderLesson(canon);
         } else {
           statusEl.textContent = "❌ Réponse inattendue (voir console).";
-          console.log("Sync raw response:", resp);
+          console.log("Sync raw response:", resp, lessonRaw);
         }
       }catch(e){
         statusEl.textContent = "❌ " + e.message;
@@ -209,11 +241,12 @@
       try{
         const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
         statusEl.textContent = `Statut: ${resp.status || "?"}`;
-        const lessonObj = normalizeLesson(resp);
-        if (lessonObj) {
-          renderLesson(lessonObj);
+        const lessonRaw = unwrapLessonEnvelope(resp);
+        const canon = toCanonicalLesson(lessonRaw);
+        if (canon) {
+          renderLesson(canon);
         } else {
-          console.log("Async raw response:", resp);
+          console.log("Async raw response:", resp, lessonRaw);
         }
       }catch(e){
         statusEl.textContent = "❌ " + e.message;
