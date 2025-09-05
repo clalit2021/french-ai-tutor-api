@@ -1,118 +1,171 @@
 # app/mimi.py
 import os
-import re
 import json
-import requests
+from typing import List, Dict, Any
+
+from openai import OpenAI
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL_TEXT = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")
 
-SYSTEM_PROMPT = """You are "Mimi", a warm, patient French tutor for an 11-year-old child (A1–A2 level).
-Input may contain: (a) extracted text from a PDF, (b) one or more images (described),
-or (c) a topic string. Your job is to turn that input into a complete, kid-friendly,
-30-minute interactive lesson.
+# Single shared OpenAI client (same as main.py style)
+openai_client: OpenAI | None = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-Constraints:
-- Keep language SIMPLE and encouraging. Use short sentences. Avoid jargon.
-- Build a clear 30-minute sequence of activities (5–7 blocks).
-- Always include speaking aloud, call-and-response, mini-games, and a creative wrap-up.
-- Prepare exercises with correct answers and brief explanations.
-- Propose 6–10 kid-safe image prompts (NO brand names, NO text in-image, no faces of real people).
-- Output MUST be valid JSON matching the schema below—no commentary.
+# ---- Strict schema prompt aligned with frontend ----
+SYSTEM_PROMPT = """
+You are Mimi, a warm, patient French tutor for an 11-year-old (A1–A2 level).
+Turn the input (topic, text excerpt, image descriptions) into a complete 30-minute lesson.
 
-JSON schema to produce:
+Return STRICT JSON ONLY with EXACTLY these keys:
+
 {
   "title": "string",
-  "age": 11,
-  "level": "A1-A2",
-  "topic_detected": "string",
+  "duration": "string (e.g., '30 min')",
   "objectives": ["string", "..."],
-  "duration_minutes": 30,
   "plan": [
-    {
-      "minutes": 5,
-      "name": "Warm-up - Guess the photo",
-      "teacher_script": "What you say step by step in simple English+French lines",
-      "student_actions": ["guess pictures", "repeat sentences"],
-      "target_phrases_fr": ["C'est ...", "Voila ..."]
-    }
-  ],
-  "slides": [
-    { "title": "France en photos", "bullets": ["..."], "speak_aloud_fr": "..." }
+    { "name": "string", "minutes": "string or number", "teacher_script": "string" }
   ],
   "image_prompts": [
-    { "id": "img1", "prompt": "Kid-friendly illustration of [X]; bright, simple; no text; 1024x1024; for teaching." }
+    { "id": "string", "prompt": "string" }
   ],
-  "exercises": [
-    {
-      "type": "mcq",
-      "question_fr": "C'est ... ?",
-      "options": ["la baguette", "le sushi", "le taco"],
-      "answer_index": 0,
-      "explain_en": "In France we say 'la baguette'."
-    },
-    {
-      "type": "fill",
-      "question_fr": "C'___ la tour Eiffel.",
-      "answer_text": "est",
-      "explain_en": "C'est = it is."
-    }
-  ],
-  "first_tutor_messages": [
-    "Bonjour ! Ready to explore France together? First, look at this picture..."
-  ]
+  "first_tutor_messages": ["string", "..."]
 }
 
-If the input looks like the "France & Francophonie" spread (Eiffel Tower, croissant, Montreal, etc.),
-adapt the plan to: warm-up guess-the-photo -> matching game -> world map discovery ->
-role-play ("guide & tourist") -> creative wrap-up. Keep it playful.
+Rules:
+- No extra keys.
+- No code fences.
+- No prose outside JSON.
+- Make language simple and encouraging; short sentences; playful tone.
+- Include speaking aloud, call-and-response, mini-games, and a creative wrap-up.
+- Provide 5–8 kid-safe image prompts (no brand names, no text in-image, no real faces).
+- Prepare at least 2 exercises inside the plan steps (teacher_script can reference them).
 """
 
-def _chat_json_strict(payload: dict) -> dict:
-    if not OPENAI_API_KEY:
-        return {
-            "title": "Demo",
-            "duration_minutes": 30,
-            "plan": [],
-            "slides": [],
-            "image_prompts": [],
-            "exercises": [],
-            "first_tutor_messages": ["OPENAI_API_KEY missing."]
-        }
+def _normalize_to_strict_schema(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure the object conforms to the strict schema expected by the frontend,
+    mapping any legacy/alternate fields to the current keys.
+    """
+    title = obj.get("title") or obj.get("lesson_title") or "Leçon"
+    # Map duration_minutes -> "30 min"
+    if "duration" in obj and isinstance(obj["duration"], (int, float)):
+        duration = f"{int(obj['duration'])} min"
+    elif "duration" in obj and isinstance(obj["duration"], str):
+        duration = obj["duration"]
+    elif "duration_minutes" in obj:
+        try:
+            duration_val = int(obj.get("duration_minutes") or 30)
+        except Exception:
+            duration_val = 30
+        duration = f"{duration_val} min"
+    else:
+        duration = "30 min"
 
-    api = "https://api.openai.com/v1/chat/completions"
+    objectives = obj.get("objectives") or []
+    if not isinstance(objectives, list):
+        objectives = [str(objectives)]
+
+    # Plan normalization
+    plan_in = obj.get("plan") or obj.get("activities") or obj.get("sections") or []
+    plan_out = []
+    if isinstance(plan_in, list):
+        for step in plan_in:
+            if not isinstance(step, dict):
+                continue
+            name = step.get("name") or step.get("title") or "Étape"
+            minutes = step.get("minutes") or step.get("duration") or step.get("duration_minutes") or ""
+            # Convert numeric minutes to string
+            if isinstance(minutes, (int, float)):
+                minutes = str(int(minutes))
+            teacher_script = (
+                step.get("teacher_script") or
+                step.get("script") or
+                ((" • ").join(step.get("steps", [])) if isinstance(step.get("steps"), list) else step.get("description")) or
+                ""
+            )
+            plan_out.append({
+                "name": name,
+                "minutes": minutes,
+                "teacher_script": teacher_script
+            })
+
+    # Image prompts normalization
+    image_prompts_in = (
+        obj.get("image_prompts")
+        or obj.get("imagePrompts")
+        or (obj.get("slides") if isinstance(obj.get("slides"), list) else [])
+        or []
+    )
+    image_prompts: List[Dict[str, str]] = []
+    if isinstance(image_prompts_in, list):
+        for i, it in enumerate(image_prompts_in):
+            if isinstance(it, dict):
+                prompt = it.get("prompt") or it.get("image_prompt")
+                if not prompt and "bullets" in it and isinstance(it["bullets"], list):
+                    # Infer from slide bullets, if present
+                    prompt = "Illustration pour: " + ", ".join(it["bullets"][:3])
+                if prompt:
+                    image_prompts.append({"id": it.get("id") or f"img{i+1}", "prompt": prompt})
+
+    first_tutor_messages = obj.get("first_tutor_messages") or obj.get("firstTutorMessages") or []
+    if not isinstance(first_tutor_messages, list) or not first_tutor_messages:
+        first_tutor_messages = [f"Bonjour ! {title}"]
+
+    strict = {
+        "title": title,
+        "duration": duration,
+        "objectives": objectives,
+        "plan": plan_out,
+        "image_prompts": image_prompts,
+        "first_tutor_messages": first_tutor_messages
+    }
+    return strict
+
+def _chat_json_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Calls OpenAI with response_format json_object and returns normalized strict JSON.
+    Falls back to a demo object if OPENAI_API_KEY is missing.
+    """
+    if not openai_client:
+        demo = {
+            "title": "Démo — Les symboles de la France",
+            "duration": "30 min",
+            "objectives": ["Reconnaître quelques symboles", "Dire 'C’est ...'"],
+            "plan": [
+                {"name": "Échauffement — Devine l’image", "minutes": "5", "teacher_script": "Regarde l’image. Qu’est-ce que c’est ? Répète : C’est un croissant !"},
+                {"name": "Jeu — Associer", "minutes": "8", "teacher_script": "Associe la photo au mot. Répète ensemble."},
+                {"name": "Découverte — Carte du monde", "minutes": "7", "teacher_script": "On parle français dans plusieurs pays. Répète : On parle français à Montréal."},
+                {"name": "Jeu de rôle — Guide & Touriste", "minutes": "6", "teacher_script": "Tu es le guide, je suis le touriste. Montre la Tour Eiffel."},
+                {"name": "Créatif — Dessin", "minutes": "4", "teacher_script": "Dessine ton symbole préféré et dis : C’est ..."}
+            ],
+            "image_prompts": [
+                {"id":"img1","prompt":"Cute kid-friendly illustration of the Eiffel Tower, bright colors, no text, no real faces, teaching style"},
+                {"id":"img2","prompt":"Croissant on a small plate, friendly illustration, simple shapes, no text"}
+            ],
+            "first_tutor_messages": ["Bonjour ! Prêt(e) ? On commence avec un jeu de devinettes !"]
+        }
+        return demo
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": "Create the JSON lesson strictly by the schema for this input:"},
-        {"role": "user", "content": json.dumps(payload)}
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
     ]
-    resp = requests.post(
-        api,
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={"model": OPENAI_MODEL_TEXT, "temperature": 0.4, "messages": messages},
-        timeout=120
+    resp = openai_client.chat.completions.create(
+        model=OPENAI_MODEL_TEXT,
+        temperature=0.4,
+        response_format={"type": "json_object"},
+        messages=messages,
     )
-    resp.raise_for_status()
-    text = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    text = (resp.choices[0].message.content or "").strip()
+    # Guaranteed JSON due to response_format
+    raw = json.loads(text)
+    return _normalize_to_strict_schema(raw)
 
-    if text.startswith("```"):
-        text = text.strip("`")
-        s, e = text.find("{"), text.rfind("}")
-        if s != -1 and e != -1 and e > s:
-            text = text[s:e+1]
-
-    try:
-        return json.loads(text)
-    except Exception:
-        m = re.search(r"\{.*\}", text, re.S)
-        if not m:
-            raise ValueError("Model did not return JSON")
-        return json.loads(m.group(0))
-
-def build_mimi_lesson(topic: str = "", ocr_text: str = "", image_descriptions=None, age: int = 11) -> dict:
+def build_mimi_lesson(topic: str = "", ocr_text: str = "", image_descriptions: List[str] | None = None, age: int = 11) -> Dict[str, Any]:
+    """
+    Public entry point for building a Mimi lesson (used by async pipeline or anywhere else).
+    Returns strict JSON (matching the frontend) plus a small 'ui_steps' preview for legacy UIs.
+    """
     if image_descriptions is None:
         image_descriptions = []
     payload = {
@@ -121,24 +174,26 @@ def build_mimi_lesson(topic: str = "", ocr_text: str = "", image_descriptions=No
         "image_descriptions": image_descriptions,
         "age": age
     }
-    lesson = _chat_json_strict(payload)
 
-    # derive simple ui_steps for your existing frontend
+    lesson_strict = _chat_json_strict(payload)
+
+    # Back-compat simple preview steps (used by older UI panes)
     ui_steps = []
-    plan = lesson.get("plan") or []
+    plan = lesson_strict.get("plan") or []
     for block in plan[:3]:
-        name = block.get("name") or "Activite"
+        name = block.get("name") or "Activité"
         script = block.get("teacher_script") or ""
         ui_steps.append({"step": name})
         if script:
             ui_steps.append({"prompt": script.split("\n")[0][:140]})
 
     if not ui_steps:
-        preview = (ocr_text or topic or "Nouvelle lecon").strip()[:160]
+        preview = (ocr_text or topic or "Nouvelle leçon").strip()[:160]
         ui_steps = [
-            {"step": f"Explorons: {preview}"},
-            {"prompt": "Repete: Bonjour Mimi ! Je suis pret(e) a apprendre !"}
+            {"step": f"Explorons : {preview}"},
+            {"prompt": "Répète : Bonjour Mimi ! Je suis prêt(e) à apprendre !"}
         ]
 
-    lesson["ui_steps"] = ui_steps
-    return lesson
+    lesson_strict["ui_steps"] = ui_steps
+    return lesson_strict
+
