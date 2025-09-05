@@ -11,3 +11,4 @@ sqlite-utils==3.37
 xmltodict==0.13.0
 openai==1.40.0
 supabase==2.6.0
+Flask-Cors==4.0.0
