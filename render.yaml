@@ -20,14 +20,8 @@
     env: docker
     plan: starter
     autoDeploy: true
-    dockerCommand:
-      - celery
-      - -A
-      - app.tasks.celery_app
-      - worker
-      - -P
-      - solo
-      - --loglevel=info
+    dockerCommand: celery -A app.tasks.celery_app worker -P solo --loglevel=info
+
     envVars:
       - key: SUPABASE_URL
         sync: false
