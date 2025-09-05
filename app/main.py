@@ -5,23 +5,16 @@ import base64
 import time
 from datetime import datetime
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 from supabase import create_client, Client
 from openai import OpenAI
 
-# Optional: import Celery task to enqueue background jobs
-# Make sure your worker service runs Celery with the same project
-try:
-    from app.tasks import process_lesson  # celery task
-except Exception:
-    process_lesson = None  # web can still run without the worker import
-
 # ------------------------------------------------------------------------------
-# App and CORS
+# Flask app
 # ------------------------------------------------------------------------------
-app = Flask(__name__, static_folder=".", static_url_path="")
+app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 
 # ------------------------------------------------------------------------------
@@ -47,8 +40,7 @@ if OPENAI_API_KEY:
 # ------------------------------------------------------------------------------
 def _public_storage_url(path: str) -> str:
     """
-    Convert 'uploads/dir/file.png' to public URL:
-    https://<proj>.supabase.co/storage/v1/object/public/uploads/dir/file.png
+    Convert 'uploads/file.png' to public URL
     """
     path = path.lstrip("/")
     return f"{SUPABASE_URL}/storage/v1/object/public/{path}"
@@ -68,8 +60,7 @@ def health():
 
 @app.get("/")
 def root():
-    # Serve the SPA index.html placed at repo root
-    return send_from_directory(".", "index.html")
+    return app.send_static_file("index.html")
 
 
 # ----------------------------- ASYNC PIPELINE ---------------------------------
@@ -77,20 +68,18 @@ def root():
 def create_lesson():
     """
     Body: { "child_id": "<uuid>", "file_path": "uploads/file.png" }
-    1) Insert lessons row (status=processing)
-    2) Enqueue Celery job to process OCR + lesson generation
-    3) Return 202 with lesson_id
+    Inserts row into lessons table (status=processing).
     """
     if not supabase:
         return jsonify({"error": "Supabase not configured"}), 500
+
     data = request.get_json(force=True, silent=True) or {}
     child_id = (data.get("child_id") or "").strip()
     file_path = (data.get("file_path") or "").strip().lstrip("/")
 
     if not child_id or not file_path:
-        return jsonify({"error": "child_id and file_path are required"}), 400
+        return jsonify({"error": "child_id and file_path required"}), 400
 
-    # Insert lesson row
     ins = {
         "child_id": child_id,
         "uploaded_file_path": file_path,
@@ -98,97 +87,40 @@ def create_lesson():
         "created_at": datetime.utcnow().isoformat()
     }
     res = supabase.table("lessons").insert(ins).execute()
-    if not res.data or not isinstance(res.data, list):
-        return jsonify({"error": "failed to insert lesson"}), 500
+    if not res.data:
+        return jsonify({"error": "insert failed"}), 500
+
     lesson_id = res.data[0]["id"]
-
-    # Enqueue Celery background job
-    if process_lesson is None:
-        # Web can still respond, but warn no worker import
-        return jsonify({"lesson_id": lesson_id, "ok": True, "status": "processing", "warn": "worker not imported"}), 202
-    try:
-        process_lesson.delay(str(lesson_id), file_path, str(child_id))
-    except Exception as e:
-        # If enqueue fails, mark error
-        supabase.table("lessons").update({"status": "error"}).eq("id", lesson_id).execute()
-        return jsonify({"error": f"failed to enqueue: {e}"}), 500
-
-    return jsonify({"lesson_id": lesson_id, "ok": True, "status": "processing"}), 202
+    # Normally enqueue Celery here
+    return jsonify({"lesson_id": lesson_id, "status": "processing"}), 202
 
 
 @app.get("/api/lessons/<lesson_id>")
 def get_lesson(lesson_id):
-    """
-    Return lesson status and data
-    """
     if not supabase:
         return jsonify({"error": "Supabase not configured"}), 500
     res = supabase.table("lessons").select("*").eq("id", lesson_id).execute()
-    rows = res.data or []
-    if not rows:
+    if not res.data:
         return jsonify({"error": "not found"}), 404
-    row = rows[0]
-    # normalize for frontend
-    out = {
-        "id": row.get("id"),
-        "status": row.get("status"),
-        "lesson": {
-            "ocr_text": row.get("ocr_text"),
-            "lesson_data": row.get("lesson_data"),
-        }
-    }
-    return jsonify(out)
+    return jsonify(res.data[0])
 
 
 # ----------------------------- SYNC LESSON V2 ---------------------------------
 SYSTEM_PROMPT = (
-    "You are “Mimi”, a warm, patient French tutor for an 11-year-old child (A1–A2 level). "
-    "Input may contain: (a) extracted text from a PDF, (b) one or more images (described), "
-    "or (c) a topic string. Your job is to turn that input into a complete, kid-friendly, "
-    "30-minute interactive lesson.\n\n"
-    "Constraints:\n"
-    "- Keep language SIMPLE and encouraging. Use short sentences. Avoid jargon.\n"
-    "- Build a clear 30-minute sequence of activities (5–7 blocks).\n"
-    "- Always include speaking aloud, call-and-response, mini-games, and a creative wrap-up.\n"
-    "- Prepare exercises with correct answers and brief explanations.\n"
-    "- Propose 6–10 kid-safe image prompts (NO brand names, NO text in-image, no faces of real people).\n"
-    "- Output MUST be valid JSON matching the schema below—no commentary.\n\n"
-    "JSON schema to produce:\n"
-    "{\n"
-    '  "title": "string",\n'
-    '  "age": 11,\n'
-    '  "level": "A1-A2",\n'
-    '  "topic_detected": "string",\n'
-    '  "objectives": ["string", "..."],\n'
-    '  "duration_minutes": 30,\n'
-    '  "plan": [ { "minutes": 5, "name": "Warm-up – Guess the photo", "teacher_script": "…", "student_actions": ["…"], "target_phrases_fr": ["…"] } ],\n'
-    '  "slides": [ { "title": "France en photos", "bullets": ["..."], "speak_aloud_fr": "..." } ],\n'
-    '  "image_prompts": [ { "id": "img1", "prompt": "Kid-friendly illustration of [X]; bright, simple; no text; 1024x1024; for teaching." } ],\n'
-    '  "exercises": [\n'
-    '    { "type": "mcq", "question_fr": "C’est ... ?", "options": ["la baguette","le sushi","le taco"], "answer_index": 0, "explain_en": "In France we say “la baguette”."},\n'
-    '    { "type": "fill", "question_fr": "C’___ la tour Eiffel.", "answer_text": "est", "explain_en": "C’est = it is."}\n'
-    '  ],\n'
-    '  "first_tutor_messages": ["Bonjour ! Ready to explore France together? First, look at this picture..."]\n'
-    "}\n"
+    "You are Mimi, a warm, patient French tutor for an 11-year-old (A1–A2 level). "
+    "Turn input (topic, text, images) into a complete 30-minute lesson. "
+    "Always reply with STRICT JSON (no extra text)."
 )
 
 @app.post("/api/v2/lesson")
 def build_lesson_v2():
-    """
-    Body: {
-      "topic": "optional",
-      "pdf_text": "optional",
-      "image_descriptions": ["optional"],
-      "age": 11
-    }
-    """
     if not openai_client:
         return jsonify({"error": "OPENAI_API_KEY not configured"}), 500
 
     body = request.get_json(force=True, silent=True) or {}
     topic = body.get("topic", "")
     pdf_text = _safe_trim(body.get("pdf_text", ""))
-    image_desc = body.get("image_descriptions", []) or []
+    image_desc = body.get("image_descriptions", [])
     age = int(body.get("age", 11))
 
     user_payload = {
@@ -203,12 +135,10 @@ def build_lesson_v2():
         temperature=0.4,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "Create the JSON lesson strictly by the schema for this input:"},
             {"role": "user", "content": json.dumps(user_payload)}
         ]
     )
     text = (resp.choices[0].message.content or "").strip()
-    # Strip code fences if present
     if text.startswith("```"):
         text = text.strip("`")
         if "{" in text and "}" in text:
@@ -217,18 +147,14 @@ def build_lesson_v2():
     try:
         lesson = json.loads(text)
     except Exception:
-        return jsonify({"error": "Model did not return valid JSON", "raw": text}), 400
+        return jsonify({"error": "Invalid JSON from model", "raw": text}), 400
 
     return jsonify({"lesson": lesson})
 
 
-# ----------------------------- IMAGE GENERATION --------------------------------
+# ----------------------------- IMAGE GENERATION -------------------------------
 @app.post("/api/v2/generate_images")
 def generate_images_v2():
-    """
-    Body: { "image_prompts": [{"id":"img1","prompt":"..."}] }
-    Returns: { "images": [{"id":"img1","b64":"..."}], "errors":[...] }
-    """
     if not openai_client:
         return jsonify({"error": "OPENAI_API_KEY not configured"}), 500
 
@@ -247,14 +173,13 @@ def generate_images_v2():
             img = openai_client.images.generate(
                 model=OPENAI_MODEL_IMAGE,
                 prompt=prompt,
-                size="512x512"  # smaller -> faster & fewer timeouts
+                size="512x512"
             )
             b64 = img.data[0].b64_json
             out.append({"id": _id, "b64": b64})
-            time.sleep(0.3)  # tiny pause helps with rate limits
+            time.sleep(0.3)
         except Exception as e:
             errs.append({"id": _id, "error": str(e)})
-            # continue to next prompt
 
     resp = {"images": out}
     if errs:
@@ -262,13 +187,9 @@ def generate_images_v2():
     return jsonify(resp)
 
 
-# ----------------------------- SAVE IMAGE TO STORAGE ---------------------------
+# ----------------------------- SAVE IMAGE TO STORAGE --------------------------
 @app.post("/api/v2/save_image")
 def save_image_to_supabase():
-    """
-    Body: { "id":"img1", "b64":"...", "filename":"lesson_123_img1.png" }
-    Saves to bucket 'uploads/<filename>' and returns public URL.
-    """
     if not supabase:
         return jsonify({"error": "Supabase not configured"}), 500
 
@@ -281,7 +202,6 @@ def save_image_to_supabase():
     try:
         img_bytes = base64.b64decode(b64)
         path = f"uploads/{filename}"
-        # Overwrite if exists
         supabase.storage.from_("uploads").upload(
             path, img_bytes, {"content-type": "image/png", "x-upsert": "true"}
         )
@@ -291,8 +211,6 @@ def save_image_to_supabase():
         return jsonify({"error": str(e)}), 500
 
 
-# ------------------------------------------------------------------------------
-# Main (dev only; Render uses gunicorn)
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
