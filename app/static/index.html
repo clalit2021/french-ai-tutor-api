@@ -1,37 +1,215 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>French AI Tutor API - Starter v2</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 40px; }
-      button { padding: 10px 16px; border-radius: 8px; }
-      pre { background: #f6f6f6; padding: 12px; border-radius: 8px; }
-    </style>
-  </head>
-  <body>
-    <h1>✅ API is running</h1>
-    <p>Use this page to test your Render deployment.</p>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>French AI Tutor</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg,#eaeafe,#f9fbff);
+      padding: 20px;
+    }
+    h1,h2,h3 { color: #333; }
+    form { margin-bottom: 20px; }
+    input, textarea, button {
+      display: block;
+      margin: 6px 0;
+      padding: 8px;
+      width: 100%;
+      max-width: 500px;
+      font-size: 1em;
+    }
+    button { cursor: pointer; }
+    .section { margin-top: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; background: #fff; }
+    .lesson-card { padding: 8px; margin: 6px 0; border-left: 4px solid #6a5acd; background: #f8f8ff; }
+    .mono { font-family: monospace; font-size: 0.9em; margin: 4px 0; }
+    .img { width: 100%; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .status { margin-top: 6px; font-size: 0.9em; color: #444; }
+  </style>
+</head>
+<body>
+  <h1>🇫🇷 Mimi – French AI Tutor</h1>
 
-    <button id="ping">Ping /health</button>
-    <button id="demo">POST /api/lessons (demo)</button>
+  <form id="lessonForm">
+    <h2>Créer une leçon</h2>
+    <label for="filePath">Chemin du fichier Supabase:</label>
+    <input id="filePath" name="filePath" type="text" placeholder="uploads/mon-fichier.pdf ou uploads/page.png" />
 
-    <pre id="out"></pre>
+    <label for="topic">Sujet (optionnel):</label>
+    <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
 
-    <script>
-      const out = document.getElementById('out');
-      document.getElementById('ping').onclick = async () => {
-        const r = await fetch('/health');
-        out.textContent = JSON.stringify(await r.json(), null, 2);
+    <label for="pdfText">Texte PDF (optionnel):</label>
+    <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
+
+    <label for="imageHints">Descriptions d'images (séparées par ;):</label>
+    <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; baguette" />
+
+    <button type="submit">Démarrer la leçon</button>
+  </form>
+
+  <div id="lessonBox"></div>
+
+  <script>
+    const API_BASE = "https://french-ai-tutor-api.onrender.com";
+
+    function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+    async function postJSON(url, data){
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
+      const txt = await r.text();
+      if (!r.ok) { throw new Error(`HTTP ${r.status}: ${txt}`); }
+      return JSON.parse(txt);
+    }
+
+    // Robust image generator
+    async function postImages(url, prompts){
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_prompts: prompts })
+      });
+      const txt = await r.text();
+      if (!r.ok) { throw new Error(`HTTP ${r.status}: ${txt}`); }
+      return JSON.parse(txt);
+    }
+
+    async function generateImagesChunked(allPrompts, gallery, statusEl){
+      const BATCH_SIZE = 2;
+      const MAX_RETRY = 2;
+      const chunks = [];
+      for (let i = 0; i < allPrompts.length; i += BATCH_SIZE) {
+        chunks.push(allPrompts.slice(i, i + BATCH_SIZE));
+      }
+
+      let made = 0, total = allPrompts.length;
+      statusEl.textContent = `Génération en cours… (0/${total})`;
+
+      for (const [ci, chunk] of chunks.entries()){
+        let tries = 0;
+        while (true){
+          try{
+            const resp = await postImages(API_BASE + "/api/v2/generate_images", chunk);
+            const imgs = resp.images || [];
+            imgs.forEach(im => {
+              if (!im.b64) return;
+              const img = document.createElement("img");
+              img.className = "img";
+              img.src = "data:image/png;base64," + im.b64;
+              gallery.appendChild(img);
+            });
+            made += imgs.length;
+            statusEl.textContent = `Génération en cours… (${made}/${total})`;
+            await sleep(500);
+            break;
+          }catch(e){
+            tries++;
+            if (tries >= MAX_RETRY){
+              statusEl.textContent = `Erreur sur lot ${ci+1}. On continue… (${made}/${total})`;
+              break;
+            }
+            await sleep(1200 * tries);
+          }
+        }
+      }
+      statusEl.textContent = `Terminé (${made}/${total})`;
+    }
+
+    function renderImagePrompts(lesson){
+      const sec = document.createElement("div"); sec.className = "section";
+      const h = document.createElement("h3"); h.textContent = "Prompts d'images"; sec.appendChild(h);
+      const arr = Array.isArray(lesson.image_prompts) ? lesson.image_prompts : [];
+      if (!arr.length){ sec.appendChild(document.createTextNode("Aucun prompt.")); return sec; }
+
+      arr.forEach(p => {
+        const d = document.createElement("div"); d.className = "mono"; d.textContent = (p.prompt || "");
+        sec.appendChild(d);
+      });
+
+      const status = document.createElement("div");
+      status.className = "status";
+      status.textContent = "Prêt.";
+      sec.appendChild(status);
+
+      const gallery = document.createElement("div");
+      gallery.style.display = "grid";
+      gallery.style.gridTemplateColumns = "repeat(auto-fill, minmax(180px, 1fr))";
+      gallery.style.gap = "10px";
+      gallery.style.marginTop = "10px";
+      sec.appendChild(gallery);
+
+      const row = document.createElement("div"); row.style.marginTop = "10px";
+      const btn = document.createElement("button");
+      btn.className = "secondary";
+      btn.textContent = "Générer ces images maintenant";
+      btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = "Lancement…";
+        try{
+          await generateImagesChunked(arr, gallery, status);
+          btn.textContent = "Images générées ✓";
+        }catch(e){
+          alert("Erreur images: " + e.message);
+          btn.textContent = "Réessayer";
+          btn.disabled = false;
+        }
       };
-      document.getElementById('demo').onclick = async () => {
-        const r = await fetch('/api/lessons', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ child_id: 'demo-child', file_path: 'uploads/demo.pdf' })
-        });
-        out.textContent = JSON.stringify(await r.json(), null, 2);
+      row.appendChild(btn);
+      sec.appendChild(row);
+
+      return sec;
+    }
+
+    // Render the full lesson
+    function renderLesson(lesson){
+      const box = document.getElementById("lessonBox");
+      box.innerHTML = "";
+
+      const title = document.createElement("h2");
+      title.textContent = lesson.title || "Nouvelle leçon";
+      box.appendChild(title);
+
+      const planSec = document.createElement("div"); planSec.className = "section";
+      const h3 = document.createElement("h3"); h3.textContent = "Plan"; planSec.appendChild(h3);
+      (lesson.plan || []).forEach(step => {
+        const div = document.createElement("div"); div.className = "lesson-card";
+        div.innerHTML = `<b>${step.name||"Étape"}</b> (${step.minutes||""} min)<br/>${step.teacher_script||""}`;
+        planSec.appendChild(div);
+      });
+      box.appendChild(planSec);
+
+      if (lesson.image_prompts){ box.appendChild(renderImagePrompts(lesson)); }
+    }
+
+    // Handle form
+    document.getElementById("lessonForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const child_id = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // demo child
+      const file_path = document.getElementById("filePath").value.trim();
+      const topic = document.getElementById("topic").value.trim();
+      const pdfText = document.getElementById("pdfText").value.trim();
+      const imageHints = document.getElementById("imageHints").value.trim();
+
+      const body = {
+        child_id,
+        file_path,
+        topic,
+        pdf_text: pdfText,
+        image_descriptions: imageHints ? imageHints.split(";") : []
       };
-    </script>
-  </body>
+
+      try{
+        const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
+        if (resp.lesson){ renderLesson(resp.lesson); }
+        else alert("Pas de leçon générée.");
+      }catch(e){
+        alert("Erreur: " + e.message);
+      }
+    };
+  </script>
+</body>
 </html>
