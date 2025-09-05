@@ -11,3 +11,9 @@ Pillow==10.4.0
 PyJWT==2.9.0
 openai>=1.40.0
 python-dotenv==1.0.1
+waitress==3.0.0
+openai==1.40.0
+numpy==1.26.4
+scikit-learn==1.5.1
+sqlite-utils==3.37
+xmltodict==0.13.0
