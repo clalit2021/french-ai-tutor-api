@@ -1,257 +1,37 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8" />
-  <title>Parle avec Mimi — Leçon (sync & async)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root{ --brand:#6a5acd; --bg:#f5f6ff; --card:#fff; --ink:#222; --muted:#666; }
-    *{ box-sizing:border-box }
-    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); }
-    .wrap{ max-width:960px; margin:24px auto; padding:0 16px; }
-    h1{ margin:0 0 16px }
-    h2{ margin:22px 0 10px }
-    label{ display:block; margin-top:10px; font-weight:600 }
-    input, textarea, button{ width:100%; padding:10px 12px; margin-top:6px; font-size:16px }
-    input, textarea{ border:1px solid #dcdced; border-radius:10px; background:#fff }
-    button{ border:0; border-radius:10px; background:var(--brand); color:#fff; cursor:pointer }
-    button.secondary{ background:#e7e7ff; color:#29296a }
-    button.ghost{ background:#fff; color:#29296a; border:1px solid #dcdced }
-    button:disabled{ opacity:.6; cursor:not-allowed }
-    .row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px }
-    .row > *{ flex:1 }
-    .card{ background:var(--card); border:1px solid #ececf6; border-radius:12px; padding:14px; margin-top:14px }
-    .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; white-space:pre-wrap }
-    .plan-item{ border-left:4px solid var(--brand); background:#fbfbff; padding:8px 10px; border-radius:8px; margin:8px 0 }
-    .status{ font-size:14px; color:var(--muted); margin-top:8px }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>Parle avec Mimi — Leçon (sync & async)</h1>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>French AI Tutor API - Starter v2</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 40px; }
+      button { padding: 10px 16px; border-radius: 8px; }
+      pre { background: #f6f6f6; padding: 12px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>✅ API is running</h1>
+    <p>Use this page to test your Render deployment.</p>
 
-    <div class="card">
-      <h2>Créer une leçon</h2>
+    <button id="ping">Ping /health</button>
+    <button id="demo">POST /api/lessons (demo)</button>
 
-      <label for="filePath">Chemin du fichier Supabase</label>
-      <input id="filePath" name="filePath" type="text" placeholder="uploads/Screenshot_2025-09-02_191857.png" />
+    <pre id="out"></pre>
 
-      <label for="topic">Sujet (optionnel)</label>
-      <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
-
-      <label for="pdfText">Texte PDF (optionnel)</label>
-      <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
-
-      <label for="imageHints">Descriptions d'images (séparées par ;)</label>
-      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; baguette" />
-
-      <div class="row">
-        <button id="btnSync">Démarrer la leçon (sync)</button>
-        <button id="btnAsync" class="secondary">Lancer traitement (async)</button>
-        <button id="btnFetch" class="ghost">Récupérer leçon par ID</button>
-      </div>
-
-      <div class="row">
-        <input id="lessonId" name="lessonId" type="text" placeholder="lesson_id (pour async)" />
-      </div>
-
-      <div id="status" class="status"></div>
-    </div>
-
-    <div id="lessonBox" class="card" style="display:none;">
-      <h2>Nouvelle leçon</h2>
-      <div id="plan"></div>
-      <div id="images"></div>
-      <div id="tutor"></div>
-    </div>
-  </div>
-
-  <script>
-    // -------- Config --------
-    const API_BASE = "https://french-ai-tutor-api.onrender.com";
-    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // démo
-
-    // -------- Helpers --------
-    const $  = (s)=>document.querySelector(s);
-    const statusEl  = $("#status");
-    const lessonBox = $("#lessonBox");
-    const planEl    = $("#plan");
-    const imagesEl  = $("#images");
-    const tutorEl   = $("#tutor");
-
-    async function postJSON(url, data){
-      const r = await fetch(url, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(data)
-      });
-      const txt = await r.text();
-      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
-      return JSON.parse(txt);
-    }
-
-    async function getJSON(url){
-      const r = await fetch(url);
-      const txt = await r.text();
-      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
-      return JSON.parse(txt);
-    }
-
-    // -------- Unwrap different response shapes --------
-    function unwrapLessonEnvelope(resp){
-      if(!resp) return null;
-      // { lesson: { lesson: {...} } }
-      if(resp.lesson && resp.lesson.lesson) return resp.lesson.lesson;
-      // { lesson: {...} }
-      if(resp.lesson) return resp.lesson;
-      // direct lesson fields (dev mode)
-      return resp;
-    }
-
-    // -------- Convert any model schema to the UI schema --------
-    function toCanonicalLesson(raw){
-      if(!raw) return null;
-      const L = JSON.parse(JSON.stringify(raw)); // shallow clone
-
-      // PLAN
-      let plan = [];
-      if (Array.isArray(L.plan)) {
-        plan = L.plan.map(x => ({
-          name: x.name || x.title || "Étape",
-          minutes: x.minutes || x.duration_minutes || x.duration || "",
-          teacher_script: x.teacher_script || x.teacherScript || x.script || (Array.isArray(x.steps) ? x.steps.join(" • ") : (x.description || ""))
-        }));
-      } else if (Array.isArray(L.activities)) {
-        plan = L.activities.map(a => ({
-          name: a.name || a.title || "Étape",
-          minutes: a.minutes || a.duration_minutes || a.duration || "",
-          teacher_script: a.teacher_script || a.teacherScript || a.script || (Array.isArray(a.steps) ? a.steps.join(" • ") : (a.description || ""))
-        }));
-      }
-
-      // IMAGE PROMPTS
-      let image_prompts = [];
-      if (Array.isArray(L.image_prompts)) image_prompts = L.image_prompts;
-      else if (Array.isArray(L.imagePrompts)) image_prompts = L.imagePrompts;
-      else if (Array.isArray(L.slides)) {
-        // Sometimes slide bullets include prompts; take any 'prompt' fields
-        image_prompts = L.slides.filter(s => s && s.prompt).map(s => ({ id: s.id || "", prompt: s.prompt }));
-      }
-
-      // FIRST TUTOR MESSAGES
-      let first_tutor_messages = [];
-      if (Array.isArray(L.first_tutor_messages)) first_tutor_messages = L.first_tutor_messages;
-      else if (Array.isArray(L.firstTutorMessages)) first_tutor_messages = L.firstTutorMessages;
-      else if (typeof L.title === "string") first_tutor_messages = [`Bonjour ! ${L.title}`];
-
-      return { plan, image_prompts, first_tutor_messages };
-    }
-
-    function speak(text){
-      try{
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = "fr-FR";
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(u);
-      }catch{}
-    }
-
-    function renderLesson(canon){
-      if(!canon) return;
-      lessonBox.style.display = "block";
-
-      // Plan
-      planEl.innerHTML = "<h3>Plan</h3>";
-      (canon.plan || []).forEach(step=>{
-        const d = document.createElement("div");
-        d.className = "plan-item";
-        d.innerHTML = `<b>${step.name||"Étape"}</b> ${step.minutes?`(${step.minutes})`:""}<br>${step.teacher_script||""}`;
-        planEl.appendChild(d);
-      });
-
-      // Image prompts
-      imagesEl.innerHTML = "<h3>Prompts d'images</h3>";
-      (canon.image_prompts || []).forEach(p=>{
-        const d = document.createElement("div");
-        d.className = "mono";
-        d.textContent = p.prompt || "";
-        imagesEl.appendChild(d);
-      });
-
-      // First tutor message
-      tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
-      const msgs = canon.first_tutor_messages || [];
-      if(msgs.length){
-        const t = document.createElement("div");
-        t.className = "mono";
-        t.textContent = msgs[0];
-        tutorEl.appendChild(t);
-
-        const b = document.createElement("button");
-        b.className = "secondary";
-        b.textContent = "Écouter";
-        b.onclick = ()=>speak(msgs[0]);
-        tutorEl.appendChild(b);
-      }
-    }
-
-    // -------- Button actions --------
-    $("#btnSync").onclick = async ()=>{
-      const body = {
-        topic: $("#topic").value.trim(),
-        pdf_text: $("#pdfText").value.trim(),
-        image_descriptions: $("#imageHints").value.trim()
-          ? $("#imageHints").value.trim().split(";")
-          : []
+    <script>
+      const out = document.getElementById('out');
+      document.getElementById('ping').onclick = async () => {
+        const r = await fetch('/health');
+        out.textContent = JSON.stringify(await r.json(), null, 2);
       };
-      statusEl.textContent = "⏳ Génération (sync)…";
-      try{
-        const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
-        const lessonRaw = unwrapLessonEnvelope(resp);
-        const canon = toCanonicalLesson(lessonRaw);
-        if (canon) {
-          statusEl.textContent = "✅ Leçon générée (sync).";
-          renderLesson(canon);
-        } else {
-          statusEl.textContent = "❌ Réponse inattendue (voir console).";
-          console.log("Sync raw response:", resp, lessonRaw);
-        }
-      }catch(e){
-        statusEl.textContent = "❌ " + e.message;
-      }
-    };
-
-    $("#btnAsync").onclick = async ()=>{
-      const file_path = $("#filePath").value.trim();
-      if(!file_path){ alert("Indique un chemin de fichier (uploads/...)"); return; }
-      statusEl.textContent = "⏳ Lancement (async)…";
-      try{
-        const r = await postJSON(API_BASE + "/api/lessons", { child_id: childIdDemo, file_path });
-        $("#lessonId").value = r.lesson_id || "";
-        statusEl.textContent = `✅ Tâche lancée. lesson_id: ${r.lesson_id}`;
-      }catch(e){
-        statusEl.textContent = "❌ " + e.message;
-      }
-    };
-
-    $("#btnFetch").onclick = async ()=>{
-      const id = $("#lessonId").value.trim();
-      if(!id){ alert("Saisis un lesson_id"); return; }
-      statusEl.textContent = "⏳ Lecture de la leçon…";
-      try{
-        const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
-        statusEl.textContent = `Statut: ${resp.status || "?"}`;
-        const lessonRaw = unwrapLessonEnvelope(resp);
-        const canon = toCanonicalLesson(lessonRaw);
-        if (canon) {
-          renderLesson(canon);
-        } else {
-          console.log("Async raw response:", resp, lessonRaw);
-        }
-      }catch(e){
-        statusEl.textContent = "❌ " + e.message;
-      }
-    };
-  </script>
-</body>
+      document.getElementById('demo').onclick = async () => {
+        const r = await fetch('/api/lessons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ child_id: 'demo-child', file_path: 'uploads/demo.pdf' })
+        });
+        out.textContent = JSON.stringify(await r.json(), null, 2);
+      };
+    </script>
+  </body>
 </html>
