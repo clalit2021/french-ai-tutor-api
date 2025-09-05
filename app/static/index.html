@@ -34,7 +34,7 @@
       <h2>Créer une leçon</h2>
 
       <label for="filePath">Chemin du fichier Supabase</label>
-      <input id="filePath" name="filePath" type="text" placeholder="uploads/Screenshot 2025-09-02 191857.png" />
+      <input id="filePath" name="filePath" type="text" placeholder="uploads/Screenshot_2025-09-02_191857.png" />
 
       <label for="topic">Sujet (optionnel)</label>
       <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
@@ -67,15 +67,54 @@
   </div>
 
   <script>
+    // -------- Config --------
     const API_BASE = "https://french-ai-tutor-api.onrender.com";
-    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // démo
+    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // votre enfant démo
 
-    const $ = (s)=>document.querySelector(s);
-    const statusEl = $("#status");
+    // -------- Helpers --------
+    const $  = (s)=>document.querySelector(s);
+    const statusEl  = $("#status");
     const lessonBox = $("#lessonBox");
-    const planEl = $("#plan");
-    const imagesEl = $("#images");
-    const tutorEl = $("#tutor");
+    const planEl    = $("#plan");
+    const imagesEl  = $("#images");
+    const tutorEl   = $("#tutor");
+
+    async function postJSON(url, data){
+      const r = await fetch(url, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(data)
+      });
+      const txt = await r.text();
+      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
+      return JSON.parse(txt);
+    }
+
+    async function getJSON(url){
+      const r = await fetch(url);
+      const txt = await r.text();
+      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
+      return JSON.parse(txt);
+    }
+
+    // Accept multiple backend response shapes and always return the actual lesson object.
+    function normalizeLesson(resp) {
+      if (!resp) return null;
+
+      // /api/v2/lesson — { lesson: {...} }
+      if (resp.lesson && !resp.lesson.lesson_data) return resp.lesson;
+
+      // /api/lessons/<id> — { lesson: { lesson_data: {...} } }
+      if (resp.lesson && resp.lesson.lesson_data) return resp.lesson.lesson_data;
+
+      // rare double nesting — { lesson: { lesson: {...} } }
+      if (resp.lesson && resp.lesson.lesson) return resp.lesson.lesson;
+
+      // dev shape — lesson fields at top level
+      if (resp.plan || resp.image_prompts || resp.first_tutor_messages) return resp;
+
+      return null;
+    }
 
     function speak(text){
       try{
@@ -87,6 +126,7 @@
     }
 
     function renderLesson(lesson){
+      if(!lesson) return;
       lessonBox.style.display = "block";
 
       // Plan
@@ -108,8 +148,8 @@
       });
 
       // First tutor message
-      const msgs = lesson.first_tutor_messages || [];
       tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
+      const msgs = lesson.first_tutor_messages || [];
       if(msgs.length){
         const t = document.createElement("div");
         t.className = "mono";
@@ -124,39 +164,25 @@
       }
     }
 
-    async function postJSON(url, data){
-      const r = await fetch(url, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(data)
-      });
-      const txt = await r.text();
-      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
-      return JSON.parse(txt);
-    }
-
-    async function getJSON(url){
-      const r = await fetch(url);
-      const txt = await r.text();
-      if(!r.ok) throw new Error(`HTTP ${r.status}: ${txt}`);
-      return JSON.parse(txt);
-    }
-
-    // ---- Buttons ----
+    // -------- Button actions --------
     $("#btnSync").onclick = async ()=>{
       const body = {
         topic: $("#topic").value.trim(),
         pdf_text: $("#pdfText").value.trim(),
-        image_descriptions: $("#imageHints").value.trim() ? $("#imageHints").value.trim().split(";") : []
+        image_descriptions: $("#imageHints").value.trim()
+          ? $("#imageHints").value.trim().split(";")
+          : []
       };
       statusEl.textContent = "⏳ Génération (sync)…";
       try{
         const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
-        if(resp.lesson){
+        const lessonObj = normalizeLesson(resp);
+        if (lessonObj) {
           statusEl.textContent = "✅ Leçon générée (sync).";
-          renderLesson(resp.lesson);
-        }else{
-          statusEl.textContent = "❌ Pas de leçon: " + JSON.stringify(resp);
+          renderLesson(lessonObj);
+        } else {
+          statusEl.textContent = "❌ Réponse inattendue (voir console).";
+          console.log("Sync raw response:", resp);
         }
       }catch(e){
         statusEl.textContent = "❌ " + e.message;
@@ -181,10 +207,13 @@
       if(!id){ alert("Saisis un lesson_id"); return; }
       statusEl.textContent = "⏳ Lecture de la leçon…";
       try{
-        const r = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
-        statusEl.textContent = `Statut: ${r.status || "?"}`;
-        if(r.lesson && r.lesson.lesson_data){
-          renderLesson(r.lesson.lesson_data);
+        const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
+        statusEl.textContent = `Statut: ${resp.status || "?"}`;
+        const lessonObj = normalizeLesson(resp);
+        if (lessonObj) {
+          renderLesson(lessonObj);
+        } else {
+          console.log("Async raw response:", resp);
         }
       }catch(e){
         statusEl.textContent = "❌ " + e.message;
