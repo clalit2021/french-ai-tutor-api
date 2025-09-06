@@ -62,9 +62,9 @@ def api_lessons():
     lesson = supabase.table("lessons").insert(lesson_rec).execute() if supabase else type("X",(object,),{"data":[{"id":"dev-lesson-id"}]})()
     lesson_id = lesson.data[0]["id"]
 
-    # Enqueue Celery job
+    # Enqueue Celery job using the full task name for robustness
     try:
-        process_lesson.delay(str(lesson_id), file_path, str(child_id))
+        celery_app.send_task("app.tasks.process_lesson", args=[str(lesson_id), file_path, str(child_id)])
     except Exception as e:
         if supabase:
             supabase.table("lessons").update({"status":"error"}).eq("id", lesson_id).execute()
@@ -72,7 +72,7 @@ def api_lessons():
 
     return jsonify(ok=True, lesson_id=lesson_id, status="processing"), 202
 
-@celery_app.task(name="tasks.process_lesson", bind=True)
+@celery_app.task(name="app.tasks.process_lesson", bind=True)
 def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
     """Background job: download file, OCR, generate lesson JSON, save to DB."""
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
