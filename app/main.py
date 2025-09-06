@@ -15,7 +15,8 @@ from openai import OpenAI
 # --------------------------------------------------------------------------
 app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
-
+from app.tutor_sync import bp as tutor_sync_bp
+app.register_blueprint(tutor_sync_bp)
 # --------------------------------------------------------------------------
 # Environment & Clients
 # --------------------------------------------------------------------------
