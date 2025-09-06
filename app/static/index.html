@@ -1,6 +1,10 @@
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Dual Tabs Example</title>
+    <!-- Add viewport for responsive design -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <script>
         // Functionality for async and sync tabs
         function switchTab(tab) {
@@ -18,6 +22,7 @@
         <button onclick="switchTab('async')">Async Tab</button>
         <button onclick="switchTab('sync')">Sync Tab</button>
     </div>
-    <img src="image.jpg" alt="A descriptive alt text for the image">
+    <!-- Corrected image path (ensure image file exists in /static/) -->
+    <img src="/static/image.jpg" alt="A descriptive alt text for the image">
 </body>
 </html>
