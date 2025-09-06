@@ -1,43 +1,50 @@
 # app/tasks.py
-import os, io, uuid, time, threading, requests, fitz
-from typing import Dict, Any, Tuple
+"""
+Async lesson pipeline (Celery + Redis):
+- POST /api/lessons            -> { lesson_id, status:"queued" }
+- GET  /api/lessons/<lesson_id> -> { status, lesson? | error? }
+
+Requires:
+  CELERY_BROKER_URL=redis://host:6379/0
+  CELERY_RESULT_BACKEND=redis://host:6379/1
+Start worker:
+  celery -A app.celery_app.celery_app worker -l info --concurrency=2
+"""
+
+import os
+import uuid
+from typing import Tuple
+
+import fitz  # PyMuPDF
+import requests
 from flask import Blueprint, request, jsonify
+from celery.result import AsyncResult
+
 from app import mimi
+from app.celery_app import celery_app
 from .ocr_abbyy import ocr_file_to_text
 
 bp = Blueprint("tasks", __name__)
 
-SUPABASE_URL   = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY   = os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "")
-# NOTE: paths look like "uploads/filename.pdf" where "uploads" is the bucket
+# ---- Supabase config ----
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "")
 
-# ---- In-memory jobs (simple) ----
-_JOBS: Dict[str, Dict[str, Any]] = {}
-_LOCK = threading.Lock()
-
-def _set_job(job_id: str, **fields):
-    with _LOCK:
-        _JOBS.setdefault(job_id, {})
-        _JOBS[job_id].update(fields)
-
-def _get_job(job_id: str) -> Dict[str, Any] | None:
-    with _LOCK:
-        return _JOBS.get(job_id)
-
-# ---- Supabase download helpers ----
+# -----------------------------
+# Helpers: Supabase + extraction
+# -----------------------------
 def _sb_public_url(file_path: str) -> str:
-    # If bucket is public, this works directly
+    """file_path should include the bucket, e.g. 'uploads/book.pdf'."""
     return f"{SUPABASE_URL}/storage/v1/object/public/{file_path.lstrip('/')}"
 
 def _download_supabase(file_path: str) -> bytes:
-    """
-    Tries public URL first; if forbidden, retries with bearer token.
-    `file_path` should include bucket, e.g. 'uploads/Screenshot_...png'
-    """
+    """Try public URL first; if forbidden, retry with Authorization (service role/anon)."""
     if not SUPABASE_URL:
         raise RuntimeError("SUPABASE_URL not set")
 
     url = _sb_public_url(file_path)
+
+    # Try public
     try:
         r = requests.get(url, timeout=(15, 120))
         if r.ok:
@@ -45,7 +52,7 @@ def _download_supabase(file_path: str) -> bytes:
     except Exception:
         pass
 
-    # Try with Authorization (works even if bucket is private and RLS allows service-role)
+    # Try with Authorization (works for private buckets with proper policy/role)
     headers = {}
     if SUPABASE_KEY:
         headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
@@ -54,11 +61,10 @@ def _download_supabase(file_path: str) -> bytes:
         raise RuntimeError(f"Supabase download failed: HTTP {r2.status_code} - {r2.text[:200]}")
     return r2.content
 
-# ---- Text extraction ----
 def _pdf_extract_text_or_empty(pdf_bytes: bytes) -> Tuple[str, bool]:
     """
-    Return (text, is_image_heavy)
-    Heuristic: if most pages produce < 40 visible chars, we consider it image-heavy.
+    Return (text, is_image_heavy).
+    Heuristic: if most pages yield < 40 visible chars, consider image-heavy.
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     total_text = []
@@ -79,74 +85,88 @@ def _guess_mime_from_name(name: str) -> str:
     if n.endswith(".jpg") or n.endswith(".jpeg"): return "image/jpeg"
     return "application/octet-stream"
 
-# ---- Worker ----
-def _worker_build_lesson(job_id: str, child_id: str, file_path: str):
-    try:
-        _set_job(job_id, status="processing")
-        print(f"[ASYNC] start job={job_id} child={child_id} file_path={file_path}")
+# -----------------------------
+# Celery task
+# -----------------------------
+@celery_app.task(name="build_lesson_from_file")
+def build_lesson_from_file(file_path: str, child_id: str = "") -> dict:
+    """
+    Celery task body. Downloads the file, extracts text (PyMuPDF → ABBYY fallback),
+    and returns a lesson payload: { "lesson": {...} }.
+    """
+    print(f"[CELERY] start file_path={file_path} child_id={child_id}")
 
-        # 1) Download from Supabase
-        blob = _download_supabase(file_path)
-        mime = _guess_mime_from_name(file_path)
+    blob = _download_supabase(file_path)
+    mime = _guess_mime_from_name(file_path)
 
-        # 2) Extract text (PDF first)
-        ocr_excerpt = ""
-        if mime == "application/pdf":
-            text, image_heavy = _pdf_extract_text_or_empty(blob)
-            if text and not image_heavy:
-                ocr_excerpt = text[:1200]
-            else:
-                # Fallback to ABBYY on the whole PDF (if configured)
-                abbyy_text = ocr_file_to_text(blob, is_pdf=True, language="French")
-                ocr_excerpt = (abbyy_text or text or "")[:1200]
-        elif mime in ("image/png", "image/jpeg"):
-            # Image → ABBYY (if configured)
-            abbyy_text = ocr_file_to_text(blob, is_pdf=False, language="French")
-            ocr_excerpt = (abbyy_text or "")[:1200]
+    # Extract text
+    ocr_excerpt = ""
+    if mime == "application/pdf":
+        text, image_heavy = _pdf_extract_text_or_empty(blob)
+        if text and not image_heavy:
+            ocr_excerpt = text[:1200]
         else:
-            # Unknown → punt
-            ocr_excerpt = ""
+            # Fallback to ABBYY (if configured); soft-fails to "" if not configured
+            abbyy_text = ocr_file_to_text(blob, is_pdf=True, language="French")
+            ocr_excerpt = (abbyy_text or text or "")[:1200]
+    elif mime in ("image/png", "image/jpeg"):
+        abbyy_text = ocr_file_to_text(blob, is_pdf=False, language="French")
+        ocr_excerpt = (abbyy_text or "")[:1200]
+    else:
+        ocr_excerpt = ""
 
-        # 3) Build the lesson with your orchestrator
-        lesson = mimi.build_mimi_lesson(
-            topic="Leçon depuis fichier",
-            ocr_text=ocr_excerpt,
-            image_descriptions=[],  # (optional) you can add your own vision cues later
-            age=11,
-        )
+    # Build lesson via your orchestrator
+    lesson = mimi.build_mimi_lesson(
+        topic="Leçon depuis fichier",
+        ocr_text=ocr_excerpt,
+        image_descriptions=[],  # add image cues later if you like
+        age=11,
+    )
 
-        _set_job(job_id, status="ready", lesson=lesson)
-        print(f"[ASYNC] done job={job_id} status=ready")
-    except Exception as e:
-        print(f"[ASYNC][ERROR] job={job_id} {repr(e)}")
-        _set_job(job_id, status="failed", error=str(e))
+    print(f"[CELERY] done file_path={file_path} len(ocr)={len(ocr_excerpt)}")
+    return {"lesson": lesson}
 
-# ---- Routes ----
+# -----------------------------
+# HTTP API
+# -----------------------------
 @bp.route("/api/lessons", methods=["POST"])
 def create_lesson_job():
+    """
+    Body:
+      { "child_id": "uuid-or-any", "file_path": "uploads/xxx.pdf|.png" }
+    """
     body = request.get_json(silent=True, force=True) or {}
     child_id = (body.get("child_id") or "").strip()
     file_path = (body.get("file_path") or "").strip()
+
     if not file_path:
         return jsonify(error="file_path is required (e.g., 'uploads/book.pdf')"), 400
 
-    lesson_id = str(uuid.uuid4())
-    _set_job(lesson_id, status="queued", child_id=child_id, file_path=file_path)
-
-    th = threading.Thread(target=_worker_build_lesson, args=(lesson_id, child_id, file_path), daemon=True)
-    th.start()
-
+    # Enqueue Celery task
+    async_res = build_lesson_from_file.delay(file_path=file_path, child_id=child_id)
+    lesson_id = async_res.id
     print(f"[ASYNC] queued lesson_id={lesson_id} file_path={file_path}")
     return jsonify(lesson_id=lesson_id, status="queued")
 
 @bp.route("/api/lessons/<lesson_id>", methods=["GET"])
 def get_lesson_job(lesson_id: str):
-    job = _get_job(lesson_id)
-    if not job:
-        return jsonify(error="lesson_id not found"), 404
-    res = {"lesson_id": lesson_id, "status": job.get("status")}
-    if job.get("status") == "ready":
-        res["lesson"] = job.get("lesson", {})
-    if job.get("status") == "failed":
-        res["error"] = job.get("error")
-    return jsonify(res)
+    """
+    Poll Celery for status/result.
+    """
+    res = AsyncResult(lesson_id, app=celery_app)
+
+    # Map Celery states to our simple statuses
+    state = res.state  # PENDING, RECEIVED, STARTED, RETRY, SUCCESS, FAILURE
+    if state == "PENDING":
+        return jsonify(lesson_id=lesson_id, status="queued")
+    if state in ("RECEIVED", "STARTED", "RETRY"):
+        return jsonify(lesson_id=lesson_id, status="processing")
+    if state == "SUCCESS":
+        payload = res.result or {}
+        # payload expected: { "lesson": {...} }
+        return jsonify(lesson_id=lesson_id, status="ready", **payload)
+    if state == "FAILURE":
+        return jsonify(lesson_id=lesson_id, status="failed", error=str(res.result)), 500
+
+    # Fallback for any uncommon state
+    return jsonify(lesson_id=lesson_id, status=state.lower())
