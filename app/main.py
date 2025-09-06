@@ -24,7 +24,8 @@ from app.tutor_sync import bp as tutor_sync_bp
 app.register_blueprint(tutor_sync_bp)
 
 # Async (enqueue, poll later)
-# Removed import of bp from app.tasks, as it does not exist there.
+from app.tasks import bp as tasks_bp
+app.register_blueprint(tasks_bp)
 
 # ---- Error handler (nice JSON) ----
 @app.errorhandler(Exception)
