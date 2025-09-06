@@ -12,11 +12,14 @@ CORS(app)
 def health():
     return jsonify(ok=True, status="healthy")
 
-# ---- Static index ----
+# ---- Root welcome route ----
 @app.get("/")
 def index():
-    # Serves app/static/index.html
-    return app.send_static_file("index.html")
+    return jsonify(
+        message="Welcome to French AI Tutor API",
+        description="An AI-powered French language learning platform",
+        status="online"
+    )
 
 # ---- Blueprints ----
 # Sync (build lesson now)
@@ -27,12 +30,35 @@ app.register_blueprint(tutor_sync_bp)
 from app.tasks import bp as tasks_bp
 app.register_blueprint(tasks_bp)
 
-# ---- Error handler (nice JSON) ----
+# ---- Error handlers ----
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify(
+        error="Not Found",
+        message="The requested resource was not found on this server",
+        status_code=404
+    ), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    # Keep logs visible in server
+    app.logger.exception("Internal server error")
+    return jsonify(
+        error="Internal Server Error",
+        message="An unexpected error occurred on the server",
+        status_code=500
+    ), 500
+
+# ---- Generic error handler for other exceptions ----
 @app.errorhandler(Exception)
 def on_error(e):
     # Keep logs visible in server
     app.logger.exception("Unhandled error")
-    return jsonify(error=str(e)), 500
+    return jsonify(
+        error="Internal Server Error",
+        message="An unexpected error occurred on the server",
+        status_code=500
+    ), 500
 
 # ---- Gunicorn entrypoint ----
 # $ gunicorn -w 1 -k gthread --threads 8 --timeout 300 --bind 0.0.0.0:5000 app.main:app
