@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <title>Parle avec Mimi — Leçon (sync & async)</title>
+  <title>Parle avec Mimi - Construire une leçon</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root{ --brand:#6a5acd; --bg:#f5f6ff; --card:#fff; --ink:#222; --muted:#666; }
@@ -27,41 +27,53 @@
     .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#efeefe; border:1px solid #dcdced; font-size:12px; margin-left:8px }
     .objective{ background:#fbfbff; border:1px solid #ececf6; border-radius:8px; padding:8px 10px; margin:6px 0 }
     img.thumb{ max-width:200px; margin:6px 8px 0 0; border-radius:8px; border:1px solid #ececf6 }
+    .tabs{ display:flex; gap:8px; margin-bottom:12px }
+    .tabs button{ flex:1; padding:12px; font-size:16px }
+    .hidden{ display:none }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Parle avec Mimi — Leçon (sync & async)</h1>
+    <h1>Parle avec Mimi - Construire une leçon</h1>
+    <p>Choisis une méthode: fichier depuis Supabase (asynchrone) ou plan rapide par sujet (synchrone).</p>
 
-    <div class="card">
-      <h2>Créer une leçon</h2>
-
-      <label for="filePath">Chemin du fichier Supabase</label>
-      <input id="filePath" name="filePath" type="text" placeholder="uploads/x.pdf ou .png" />
-
-      <label for="topic">Sujet (optionnel)</label>
-      <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
-
-      <label for="pdfText">Texte PDF (optionnel)</label>
-      <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
-
-      <label for="imageHints">Descriptions d'images (séparées par ;)</label>
-      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; croissant; Paris skyline" />
-
-      <div class="row">
-        <button id="btnSync">Démarrer la leçon (sync)</button>
-        <button id="btnAsync" class="secondary">Lancer traitement (async)</button>
-        <button id="btnFetch" class="ghost">Récupérer leçon par ID</button>
-      </div>
-
-      <div class="row">
-        <input id="lessonId" name="lessonId" type="text" placeholder="lesson_id (pour async)" />
-      </div>
-
-      <div id="status" class="status"></div>
+    <div class="tabs">
+      <button id="tabAsync" class="secondary">Depuis un fichier (async /api/lessons)</button>
+      <button id="tabSync" class="secondary">Plan rapide (sync /api/v2/lesson)</button>
     </div>
 
-    <div id="lessonBox" class="card" style="display:none;">
+    <!-- Async form -->
+    <div id="asyncForm" class="card hidden">
+      <h2>Créer une leçon (async)</h2>
+      <label for="filePath">Chemin du fichier Supabase</label>
+      <input id="filePath" name="filePath" type="text" placeholder="uploads/x.pdf ou .png" />
+      <div class="row">
+        <button id="btnAsync">Lancer traitement (async)</button>
+      </div>
+      <div class="row">
+        <input id="lessonId" name="lessonId" type="text" placeholder="lesson_id (pour async)" />
+        <button id="btnFetch" class="ghost">Récupérer leçon par ID</button>
+      </div>
+      <div id="statusAsync" class="status"></div>
+    </div>
+
+    <!-- Sync form -->
+    <div id="syncForm" class="card hidden">
+      <h2>Créer une leçon (sync)</h2>
+      <label for="topic">Sujet (optionnel)</label>
+      <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
+      <label for="pdfText">Texte PDF (optionnel)</label>
+      <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
+      <label for="imageHints">Descriptions d'images (séparées par ;)</label>
+      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; croissant; Paris skyline" />
+      <div class="row">
+        <button id="btnSync">Démarrer la leçon (sync)</button>
+      </div>
+      <div id="statusSync" class="status"></div>
+    </div>
+
+    <!-- Lesson output -->
+    <div id="lessonBox" class="card hidden">
       <h2 id="lessonTitle">Nouvelle leçon</h2>
       <div id="meta"></div>
       <div id="objectives"></div>
@@ -72,15 +84,18 @@
   </div>
 
   <script>
-    // -------- Config --------
     const API_BASE = (window.location.origin && window.location.origin.startsWith("http"))
       ? window.location.origin
       : "http://localhost:5000";
-    const childIdDemo = "test123";
+    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // demo
 
-    // -------- Helpers --------
-    const $  = (s)=>document.querySelector(s);
-    const statusEl   = $("#status");
+    // Tab switching
+    const asyncForm = document.getElementById("asyncForm");
+    const syncForm = document.getElementById("syncForm");
+    document.getElementById("tabAsync").onclick = ()=>{ asyncForm.classList.remove("hidden"); syncForm.classList.add("hidden"); };
+    document.getElementById("tabSync").onclick = ()=>{ syncForm.classList.remove("hidden"); asyncForm.classList.add("hidden"); };
+
+    const $ = (s)=>document.querySelector(s);
     const lessonBox  = $("#lessonBox");
     const titleEl    = $("#lessonTitle");
     const metaEl     = $("#meta");
@@ -152,7 +167,7 @@
 
     function renderLesson(canon){
       if(!canon) return;
-      lessonBox.style.display = "block";
+      lessonBox.classList.remove("hidden");
 
       // Title + meta
       titleEl.textContent = canon.title || "Leçon";
@@ -186,7 +201,7 @@
         planEl.appendChild(d);
       });
 
-      // Image prompts (text list)
+      // Image prompts
       imagesEl.innerHTML = "<h3>Prompts d'images</h3>";
       (canon.image_prompts || []).forEach((p)=>{
         const d = document.createElement("div");
@@ -216,7 +231,38 @@
       }
     }
 
-    // -------- Button actions --------
+    // Async flow
+    $("#btnAsync").onclick = async ()=>{
+      const file_path = $("#filePath").value.trim();
+      if(!file_path){ alert("Indique un chemin de fichier (uploads/...)"); return; }
+      $("#statusAsync").textContent = "⏳ Lancement (async)…";
+      try{
+        const r = await postJSON(API_BASE + "/api/lessons", { child_id: childIdDemo, file_path });
+        $("#lessonId").value = r.lesson_id || "";
+        $("#statusAsync").textContent = `✅ Tâche lancée. lesson_id: ${r.lesson_id}`;
+      }catch(e){
+        $("#statusAsync").textContent = "❌ " + e.message;
+      }
+    };
+
+    $("#btnFetch").onclick = async ()=>{
+      const id = $("#lessonId").value.trim();
+      if(!id){ alert("Saisis un lesson_id"); return; }
+      $("#statusAsync").textContent = "⏳ Lecture de la leçon…";
+      try{
+        const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
+        $("#statusAsync").textContent = `Statut: ${resp.status || "?"}`;
+        const canon = normalizeLesson(resp.lesson ? resp : resp);
+        if (canon) {
+          renderLesson(canon);
+          await maybeGenerateAndRenderImages(canon);
+        }
+      }catch(e){
+        $("#statusAsync").textContent = "❌ " + e.message;
+      }
+    };
+
+    // Sync flow
     $("#btnSync").onclick = async ()=>{
       const body = {
         topic:   $("#topic").value.trim(),
@@ -225,82 +271,22 @@
           ? $("#imageHints").value.trim().split(";").map(s=>s.trim()).filter(Boolean)
           : []
       };
-      statusEl.textContent = "⏳ Génération (sync)…";
+      $("#statusSync").textContent = "⏳ Génération (sync)…";
       try{
         const resp = await postJSON(API_BASE + "/api/v2/lesson", body);
         const canon = normalizeLesson(resp);
         if (canon) {
-          statusEl.textContent = "✅ Leçon générée (sync).";
+          $("#statusSync").textContent = "✅ Leçon générée (sync).";
           renderLesson(canon);
           await maybeGenerateAndRenderImages(canon);
-          // Tutor messages (first)
-          tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
-          const msgs = canon.first_tutor_messages || [];
-          if(msgs.length){
-            const t = document.createElement("div");
-            t.className = "mono";
-            t.textContent = msgs[0];
-            tutorEl.appendChild(t);
-            const b = document.createElement("button");
-            b.className = "secondary";
-            b.textContent = "Écouter";
-            b.onclick = ()=>speak(msgs[0]);
-            tutorEl.appendChild(b);
-          }
         } else {
-          statusEl.textContent = "❌ Réponse inattendue (voir console).";
+          $("#statusSync").textContent = "❌ Réponse inattendue (voir console).";
           console.log("Sync raw response:", resp);
         }
       }catch(e){
-        statusEl.textContent = "❌ " + e.message;
-      }
-    };
-
-    $("#btnAsync").onclick = async ()=>{
-      const file_path = $("#filePath").value.trim();
-      if(!file_path){ alert("Indique un chemin de fichier (uploads/...)"); return; }
-      statusEl.textContent = "⏳ Lancement (async)…";
-      try{
-        const r = await postJSON(API_BASE + "/api/lessons", { child_id: childIdDemo, file_path });
-        $("#lessonId").value = r.lesson_id || "";
-        statusEl.textContent = `✅ Tâche lancée. lesson_id: ${r.lesson_id}`;
-      }catch(e){
-        statusEl.textContent = "❌ " + e.message;
-      }
-    };
-
-    $("#btnFetch").onclick = async ()=>{
-      const id = $("#lessonId").value.trim();
-      if(!id){ alert("Saisis un lesson_id"); return; }
-      statusEl.textContent = "⏳ Lecture de la leçon…";
-      try{
-        const resp = await getJSON(API_BASE + "/api/lessons/" + encodeURIComponent(id));
-        statusEl.textContent = `Statut: ${resp.status || "?"}`;
-        const canon = normalizeLesson(resp.lesson ? resp : resp);
-        if (canon) {
-          renderLesson(canon);
-          await maybeGenerateAndRenderImages(canon);
-          tutorEl.innerHTML = "<h3>Premiers messages du tuteur</h3>";
-          const msgs = canon.first_tutor_messages || [];
-          if(msgs.length){
-            const t = document.createElement("div");
-            t.className = "mono";
-            t.textContent = msgs[0];
-            tutorEl.appendChild(t);
-            const b = document.createElement("button");
-            b.className = "secondary";
-            b.textContent = "Écouter";
-            b.onclick = ()=>speak(msgs[0]);
-            tutorEl.appendChild(b);
-          }
-        } else {
-          console.log("Async raw response:", resp);
-        }
-      }catch(e){
-        statusEl.textContent = "❌ " + e.message;
+        $("#statusSync").textContent = "❌ " + e.message;
       }
     };
   </script>
 </body>
 </html>
-
