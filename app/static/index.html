@@ -1,28 +1,187 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <title>Dual Tabs Example</title>
-    <!-- Add viewport for responsive design -->
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script>
-        // Functionality for async and sync tabs
-        function switchTab(tab) {
-            // Logic to switch between tabs
-        }
-
-        // Functionality for auto-poll
-        setInterval(() => {
-            // Polling logic
-        }, 5000);
-    </script>
+  <meta charset="UTF-8" />
+  <title>Parle avec Mimi — Construire une leçon</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{ --brand:#6a5acd; --bg:#f5f6ff; --card:#fff; --ink:#222; --muted:#666; }
+    *{ box-sizing:border-box }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); }
+    .wrap{ max-width:960px; margin:24px auto; padding:0 16px; }
+    h1{ margin:0 0 16px }
+    h2{ margin:22px 0 10px }
+    label{ display:block; margin-top:10px; font-weight:600 }
+    input, textarea, button{ width:100%; padding:10px 12px; margin-top:6px; font-size:16px }
+    input, textarea{ border:1px solid #dcdced; border-radius:10px; background:#fff }
+    button{ border:0; border-radius:10px; background:var(--brand); color:#fff; cursor:pointer }
+    button.secondary{ background:#e7e7ff; color:#29296a }
+    button.ghost{ background:#fff; color:#29296a; border:1px solid #dcdced }
+    button:disabled{ opacity:.6; cursor:not-allowed }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px }
+    .row > *{ flex:1 }
+    .card{ background:var(--card); border:1px solid #ececf6; border-radius:12px; padding:14px; margin-top:14px }
+    .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; white-space:pre-wrap }
+    .plan-item{ border-left:4px solid var(--brand); background:#fbfbff; padding:8px 10px; border-radius:8px; margin:8px 0 }
+    .status{ font-size:14px; color:var(--muted); margin-top:8px }
+    .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#efeefe; border:1px solid #dcdced; font-size:12px; margin-left:8px }
+    .objective{ background:#fbfbff; border:1px solid #ececf6; border-radius:8px; padding:8px 10px; margin:6px 0 }
+    img.thumb{ max-width:200px; margin:6px 8px 0 0; border-radius:8px; border:1px solid #ececf6 }
+    .tabs{ display:flex; gap:8px; margin-bottom:16px }
+    .tabs button{ flex:1; padding:12px; font-weight:600; border-radius:12px; }
+    .tabs button.active{ background:var(--brand); color:#fff; }
+  </style>
 </head>
 <body>
-    <div id="tabs">
-        <button onclick="switchTab('async')">Async Tab</button>
-        <button onclick="switchTab('sync')">Sync Tab</button>
+  <div class="wrap">
+    <h1>Parle avec Mimi - Construire une leçon</h1>
+    <p>Choisis une méthode: fichier depuis Supabase (asynchrone) ou plan rapide par sujet (synchrone).</p>
+
+    <div class="tabs">
+      <button id="tabAsync" class="active">Depuis un fichier (async /api/lessons)</button>
+      <button id="tabSync">Plan rapide (sync /api/v2/lesson)</button>
     </div>
-    <!-- Corrected image path (ensure image file exists in /static/) -->
-    <img src="/static/image.jpg" alt="A descriptive alt text for the image">
+
+    <!-- Async card -->
+    <div class="card" id="cardAsync">
+      <h2>Créer une leçon (async)</h2>
+      <label for="filePath">Chemin du fichier Supabase</label>
+      <input id="filePath" name="filePath" type="text" placeholder="uploads/x.pdf ou .png" />
+      <div class="row">
+        <button id="btnAsync">Lancer traitement (async)</button>
+        <button id="btnFetch" class="ghost">Récupérer leçon par ID</button>
+      </div>
+      <div class="row">
+        <input id="lessonId" name="lessonId" type="text" placeholder="lesson_id (pour async)" />
+      </div>
+      <div id="statusAsync" class="status"></div>
+    </div>
+
+    <!-- Sync card -->
+    <div class="card" id="cardSync" style="display:none;">
+      <h2>Créer une leçon (sync)</h2>
+      <label for="topic">Sujet (optionnel)</label>
+      <input id="topic" name="topic" type="text" placeholder="Ex: France et Francophonie" />
+      <label for="pdfText">Texte PDF (optionnel)</label>
+      <textarea id="pdfText" name="pdfText" rows="4" placeholder="Colle ici un extrait de texte OCR ou des notes..."></textarea>
+      <label for="imageHints">Descriptions d'images (séparées par ;)</label>
+      <input id="imageHints" name="imageHints" type="text" placeholder="Ex: Tour Eiffel; croissant; Paris skyline" />
+      <button id="btnSync">Démarrer la leçon (sync)</button>
+      <div id="statusSync" class="status"></div>
+    </div>
+
+    <!-- Lesson box -->
+    <div id="lessonBox" class="card" style="display:none;">
+      <h2 id="lessonTitle">Nouvelle leçon</h2>
+      <div id="meta"></div>
+      <div id="objectives"></div>
+      <div id="plan"></div>
+      <div id="images"></div>
+      <div id="tutor"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = (window.location.origin && window.location.origin.startsWith("http"))
+      ? window.location.origin
+      : "http://localhost:5000";
+    const childIdDemo = "2e735737-96fc-4d46-8bb9-19f72d8f6215"; // demo
+
+    const $ = (s)=>document.querySelector(s);
+    const statusAsync=$("#statusAsync"), statusSync=$("#statusSync");
+    const lessonBox=$("#lessonBox"), titleEl=$("#lessonTitle"),
+          metaEl=$("#meta"), objectivesEl=$("#objectives"),
+          planEl=$("#plan"), imagesEl=$("#images"), tutorEl=$("#tutor");
+
+    async function postJSON(url,data){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});const txt=await r.text();if(!r.ok)throw new Error(`HTTP ${r.status}: ${txt}`);return JSON.parse(txt);}
+    async function getJSON(url){const r=await fetch(url);const txt=await r.text();if(!r.ok)throw new Error(`HTTP ${r.status}: ${txt}`);return JSON.parse(txt);}
+
+    function unwrapLessonEnvelope(resp){if(!resp)return null;if(resp.lesson&&typeof resp.lesson==="object")return resp.lesson;return resp;}
+    function toCanonicalLesson(raw){
+      if(!raw)return null;
+      const L=JSON.parse(JSON.stringify(raw));
+      const title=typeof L.title==="string"?L.title:"Leçon";
+      const duration=L.duration||"";
+      const objectives=Array.isArray(L.objectives)?L.objectives:[];
+      let plan=[];if(Array.isArray(L.plan)){plan=L.plan.map(x=>({name:x.name||x.title||"Étape",minutes:x.minutes??x.duration??"",teacher_script:x.teacher_script||x.script||(Array.isArray(x.steps)?x.steps.join(" • "):(x.description||""))}))}
+      let image_prompts=Array.isArray(L.image_prompts)?L.image_prompts.slice():[];if(!image_prompts.length&&Array.isArray(L.imagePrompts)){image_prompts=L.imagePrompts.slice();}
+      let first_tutor_messages=[];if(Array.isArray(L.first_tutor_messages))first_tutor_messages=L.first_tutor_messages;else if(Array.isArray(L.firstTutorMessages))first_tutor_messages=L.firstTutorMessages;else if(title)first_tutor_messages=[`Bonjour ! ${title}`];
+      return {title,duration,objectives,plan,image_prompts,first_tutor_messages};
+    }
+    function normalizeLesson(raw){return toCanonicalLesson(unwrapLessonEnvelope(raw));}
+
+    function speak(text){try{const u=new SpeechSynthesisUtterance(text);u.lang="fr-FR";window.speechSynthesis.cancel();window.speechSynthesis.speak(u);}catch{}}
+
+    function renderLesson(canon){
+      if(!canon)return;
+      lessonBox.style.display="block";
+      titleEl.textContent=canon.title||"Leçon";metaEl.innerHTML="";
+      if(canon.duration){const pill=document.createElement("span");pill.className="pill";pill.textContent=`Durée: ${canon.duration}`;metaEl.appendChild(pill);}
+      objectivesEl.innerHTML="";if(Array.isArray(canon.objectives)&&canon.objectives.length){const h=document.createElement("h3");h.textContent="Objectifs";objectivesEl.appendChild(h);canon.objectives.forEach(o=>{const d=document.createElement("div");d.className="objective";d.textContent=o;objectivesEl.appendChild(d);});}
+      planEl.innerHTML="<h3>Plan</h3>";(canon.plan||[]).forEach(step=>{const d=document.createElement("div");d.className="plan-item";d.innerHTML=`<b>${step.name||"Étape"}</b> ${step.minutes?`(${step.minutes})`:""}<br>${step.teacher_script||""}`;planEl.appendChild(d);});
+      imagesEl.innerHTML="<h3>Prompts d'images</h3>";(canon.image_prompts||[]).forEach(p=>{const d=document.createElement("div");d.className="mono";d.textContent=p.prompt||p;imagesEl.appendChild(d);});
+    }
+
+    async function maybeGenerateAndRenderImages(canon){
+      if(!canon||!Array.isArray(canon.image_prompts)||!canon.image_prompts.length)return;
+      try{const gen=await postJSON(`${API_BASE}/api/v2/generate_images`,{image_prompts:canon.image_prompts});if(Array.isArray(gen.images)&&gen.images.length){const h=document.createElement("h3");h.textContent="Images";imagesEl.appendChild(h);gen.images.forEach(img=>{const el=document.createElement("img");el.className="thumb";el.src=`data:image/png;base64,${img.b64}`;el.alt=img.id||"image";imagesEl.appendChild(el);});}}catch(e){console.warn("Image generation failed:",e);}
+    }
+
+    async function pollLesson(id,onUpdate){
+      let tries=0;
+      while(tries<60){
+        const resp=await getJSON(`${API_BASE}/api/lessons/${encodeURIComponent(id)}`);
+        onUpdate&&onUpdate(resp);
+        if(resp.status==="ready"&&resp.lesson)return resp;
+        if(resp.status==="failed")throw new Error(resp.error||"failed");
+        await new Promise(r=>setTimeout(r,2000));
+        tries++;
+      }
+      throw new Error("Temps dépassé.");
+    }
+
+    // Buttons
+    $("#btnAsync").onclick=async()=>{
+      const file_path=$("#filePath").value.trim();
+      if(!file_path){alert("Indique un chemin de fichier (uploads/...)");return;}
+      statusAsync.textContent="⏳ Lancement (async)…";
+      try{
+        const r=await postJSON(API_BASE+"/api/lessons",{child_id:childIdDemo,file_path});
+        $("#lessonId").value=r.lesson_id||"";
+        statusAsync.textContent=`⏳ En cours… (${r.lesson_id})`;
+        const resp=await pollLesson(r.lesson_id,t=>{statusAsync.textContent=`Statut: ${t.status}`;});
+        statusAsync.textContent="✅ Prêt.";
+        const canon=normalizeLesson(resp.lesson?resp:resp);
+        renderLesson(canon);await maybeGenerateAndRenderImages(canon);
+        tutorEl.innerHTML="<h3>Premiers messages du tuteur</h3>";const msgs=canon.first_tutor_messages||[];if(msgs.length){const t=document.createElement("div");t.className="mono";t.textContent=msgs[0];tutorEl.appendChild(t);const b=document.createElement("button");b.className="secondary";b.textContent="Écouter";b.onclick=()=>speak(msgs[0]);tutorEl.appendChild(b);}
+      }catch(e){statusAsync.textContent="❌ "+e.message;}
+    };
+
+    $("#btnSync").onclick=async()=>{
+      const body={topic:$("#topic").value.trim(),pdf_text:$("#pdfText").value.trim(),image_descriptions:$("#imageHints").value.trim()?$("#imageHints").value.trim().split(";").map(s=>s.trim()).filter(Boolean):[]};
+      statusSync.textContent="⏳ Génération (sync)…";
+      try{
+        const resp=await postJSON(API_BASE+"/api/v2/lesson",body);
+        const canon=normalizeLesson(resp);
+        if(canon){statusSync.textContent="✅ Leçon générée (sync).";renderLesson(canon);await maybeGenerateAndRenderImages(canon);tutorEl.innerHTML="<h3>Premiers messages du tuteur</h3>";const msgs=canon.first_tutor_messages||[];if(msgs.length){const t=document.createElement("div");t.className="mono";t.textContent=msgs[0];tutorEl.appendChild(t);const b=document.createElement("button");b.className="secondary";b.textContent="Écouter";b.onclick=()=>speak(msgs[0]);tutorEl.appendChild(b);}}else{statusSync.textContent="❌ Réponse inattendue (voir console).";console.log("Sync raw response:",resp);}
+      }catch(e){statusSync.textContent="❌ "+e.message;}
+    };
+
+    $("#btnFetch").onclick=async()=>{
+      const id=$("#lessonId").value.trim();
+      if(!id){alert("Saisis un lesson_id");return;}
+      statusAsync.textContent="⏳ Lecture de la leçon…";
+      try{
+        const resp=await getJSON(API_BASE+"/api/lessons/"+encodeURIComponent(id));
+        statusAsync.textContent=`Statut: ${resp.status||"?"}`;
+        const canon=normalizeLesson(resp.lesson?resp:resp);
+        if(canon){renderLesson(canon);await maybeGenerateAndRenderImages(canon);}
+      }catch(e){statusAsync.textContent="❌ "+e.message;}
+    };
+
+    // Tabs
+    $("#tabAsync").onclick=()=>{ $("#tabAsync").classList.add("active");$("#tabSync").classList.remove("active");$("#cardAsync").style.display="block";$("#cardSync").style.display="none";};
+    $("#tabSync").onclick=()=>{ $("#tabSync").classList.add("active");$("#tabAsync").classList.remove("active");$("#cardSync").style.display="block";$("#cardAsync").style.display="none";};
+  </script>
 </body>
 </html>
