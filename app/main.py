@@ -7,6 +7,21 @@ from flask_cors import CORS
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
+# ---- After request hook for headers ----
+@app.after_request
+def add_headers(response):
+    # Set Content-Type with utf-8 for HTML responses
+    if response.content_type and 'text/html' in response.content_type:
+        response.content_type = 'text/html; charset=utf-8'
+    
+    # Set Cache-Control for static assets
+    response.headers['Cache-Control'] = 'public, max-age=3600'
+    
+    # Set X-Content-Type-Options for security
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    return response
+
 # ---- Health ----
 @app.get("/health")
 def health():
