@@ -20,7 +20,8 @@
     env: docker
     plan: starter
     autoDeploy: true
-    celery -A app.celery_app worker --loglevel=info
+   dockerCommand: celery -A app.celery_app worker -l info --concurrency=2
+
 
     envVars:
       - key: SUPABASE_URL
