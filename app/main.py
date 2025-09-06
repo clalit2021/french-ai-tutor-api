@@ -12,11 +12,10 @@ CORS(app)
 def health():
     return jsonify(ok=True, status="healthy")
 
-# ---- Static index ----
+# ---- Root route ----
 @app.get("/")
 def index():
-    # Serves app/static/index.html
-    return app.send_static_file("index.html")
+    return jsonify(message="Welcome to French AI Tutor API", status="healthy")
 
 # ---- Blueprints ----
 # Sync (build lesson now)
@@ -27,7 +26,11 @@ app.register_blueprint(tutor_sync_bp)
 from app.tasks import bp as tasks_bp
 app.register_blueprint(tasks_bp)
 
-# ---- Error handler (nice JSON) ----
+# ---- Error handlers (nice JSON) ----
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify(error="Not Found", message="The requested resource was not found", status=404), 404
+
 @app.errorhandler(Exception)
 def on_error(e):
     # Keep logs visible in server
