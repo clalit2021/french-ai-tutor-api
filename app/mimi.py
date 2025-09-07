@@ -1,15 +1,31 @@
 # app/mimi.py
-import os
-import json
-from typing import List, Dict, Any
+import os, json, time
+from typing import List, Dict, Any, Optional
 
-from openai import OpenAI
+try:
+    # OpenAI SDK path (if you choose to keep the SDK)
+    from openai import OpenAI  # requires 'openai' in requirements.txt
+except Exception:
+    OpenAI = None  # type: ignore
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL_TEXT = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")
+OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "30"))  # seconds
+OPENAI_RETRIES = int(os.getenv("OPENAI_RETRIES", "2"))
 
-# Single shared OpenAI client
-openai_client: OpenAI | None = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+# Single shared OpenAI client (SDK) — only if both key and SDK exist
+openai_client: Optional["OpenAI"] = None
+if OPENAI_API_KEY and OpenAI is not None:
+    try:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception as e:
+        print("[BOOT] OpenAI client init failed:", repr(e))
+        openai_client = None
+else:
+    if not OPENAI_API_KEY:
+        print("[BOOT] OPENAI_API_KEY not set — running in demo mode")
+    elif OpenAI is None:
+        print("[BOOT] 'openai' package not installed — install or switch to requests fallback")
 
 SYSTEM_PROMPT = """
 You are Mimi, a warm, patient French tutor for an 11-year-old (A1–A2 level).
@@ -104,9 +120,20 @@ def _normalize_to_strict_schema(obj: Dict[str, Any]) -> Dict[str, Any]:
         "first_tutor_messages": first_tutor_messages,
     }
 
+def _extract_json_loose(text: str) -> Dict[str, Any]:
+    """As a last resort, try to find the outermost JSON object in text."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start:end+1])
+        except Exception:
+            pass
+    raise ValueError("Model did not return valid JSON")
+
 def _chat_json_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
-    if not openai_client:
-        # Demo object if key missing
+    # Demo path if no key or no client
+    if not OPENAI_API_KEY or openai_client is None:
         return {
             "title": "Démo — Les symboles de la France",
             "duration": "30 min",
@@ -125,20 +152,45 @@ def _chat_json_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
             "first_tutor_messages": ["Bonjour ! Prêt(e) ? On commence avec un jeu de devinettes !"]
         }
 
-    resp = openai_client.chat.completions.create(
-        model=OPENAI_MODEL_TEXT,
-        temperature=0.4,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ],
-    )
-    text = (resp.choices[0].message.content or "").strip()
-    raw = json.loads(text)  # enforced JSON
-    return _normalize_to_strict_schema(raw)
+    # Trim long text defensively
+    payload = dict(payload)
+    if isinstance(payload.get("pdf_text_excerpt"), str):
+        payload["pdf_text_excerpt"] = payload["pdf_text_excerpt"][:12000]
 
-def build_mimi_lesson(topic: str = "", ocr_text: str = "", image_descriptions: List[str] | None = None, age: int = 11) -> Dict[str, Any]:
+    # Tiny retry with exponential backoff
+    last_err = None
+    for attempt in range(OPENAI_RETRIES + 1):
+        try:
+            resp = openai_client.chat.completions.create(
+                model=OPENAI_MODEL_TEXT,
+                temperature=0.4,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                timeout=OPENAI_TIMEOUT,
+            )
+            if not resp.choices:
+                raise ValueError("No choices returned from model")
+            text = (resp.choices[0].message.content or "").strip()
+            try:
+                raw = json.loads(text)  # ideal: enforced JSON
+            except json.JSONDecodeError:
+                # Fallback: loose extraction if model accidentally added stray chars
+                raw = _extract_json_loose(text)
+            return _normalize_to_strict_schema(raw)
+        except Exception as e:
+            last_err = e
+            if attempt < OPENAI_RETRIES:
+                time.sleep(0.7 * (2 ** attempt))
+            else:
+                raise
+
+    # Should never reach (loop returns or raises)
+    raise RuntimeError(f"OpenAI call failed: {last_err}")
+
+def build_mimi_lesson(topic: str = "", ocr_text: str = "", image_descriptions: Optional[List[str]] = None, age: int = 11) -> Dict[str, Any]:
     if image_descriptions is None:
         image_descriptions = []
     payload = {
