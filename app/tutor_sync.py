@@ -4,7 +4,7 @@ import json
 from typing import List, Dict, Any, Optional
 from flask import Blueprint, request, jsonify
 
-from app import mimi  # your lesson builder
+from app import mimi  # lesson builder module
 
 bp = Blueprint("tutor_sync", __name__)
 
@@ -12,7 +12,7 @@ OPENAI_MODEL_IMAGE = os.getenv("OPENAI_MODEL_IMAGE", "gpt-image-1")
 OPENAI_MODEL_TEXT  = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")
 OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY", "")
 
-# Lazy init so the module can import even without the SDK or key
+# ----- Lazy OpenAI client (so module imports even without key/SDK) -----
 _openai_client = None
 def _client():
     global _openai_client
@@ -21,13 +21,14 @@ def _client():
     if not OPENAI_API_KEY:
         return None
     try:
-        from openai import OpenAI  # requires openai>=1.40 in requirements.txt
+        from openai import OpenAI  # require openai>=1.40 in requirements.txt
         _openai_client = OpenAI(api_key=OPENAI_API_KEY)
         return _openai_client
     except Exception as e:
         print("[BOOT] OpenAI client init failed:", repr(e))
         return None
 
+# ----- Helpers -----
 def _safe_trim(text: str, limit: int = 12000) -> str:
     return (text or "")[:limit]
 
@@ -41,7 +42,6 @@ def _normalize_history(raw: Any, limit: int = 10) -> List[Dict[str, str]]:
     if not isinstance(raw, list):
         return []
     msgs: List[Dict[str, str]] = []
-    # strings -> alternating user/assistant
     alt_roles = ["user", "assistant"]
     alt_i = 0
     for item in raw:
@@ -54,6 +54,10 @@ def _normalize_history(raw: Any, limit: int = 10) -> List[Dict[str, str]]:
             msgs.append({"role": alt_roles[alt_i % 2], "content": item[:800]})
             alt_i += 1
     return msgs[-limit:]
+
+# =========================
+# Routes
+# =========================
 
 @bp.route("/api/v2/lesson", methods=["POST"])
 def build_lesson():
@@ -75,6 +79,7 @@ def build_lesson():
         print("[V2/lesson][ERROR]", repr(e))
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
 @bp.route("/api/v2/generate_images", methods=["POST"])
 def generate_images():
     body = request.get_json(force=True, silent=True) or {}
@@ -82,7 +87,6 @@ def generate_images():
 
     cli = _client()
     if cli is None:
-        # Keep API responsive in dev
         return jsonify({"ok": False, "error": "OPENAI_API_KEY missing or OpenAI SDK not installed"}), 503
 
     out = []
@@ -91,20 +95,21 @@ def generate_images():
             prompt = (p.get("prompt") or "").strip()
             if not prompt:
                 continue
-            # keep IDs stable if provided
             pid = p.get("id") or f"img{len(out)+1}"
             resp = cli.images.generate(
                 model=OPENAI_MODEL_IMAGE,
-                prompt=prompt[:1800],   # gentle cap
+                prompt=prompt[:1800],   # gentle cap for prompt size
                 size="1024x1024"
             )
             b64 = resp.data[0].b64_json
-            out.append({"id": pid, "b64": b64})
+            data_url = f"data:image/png;base64,{b64}"
+            out.append({"id": pid, "b64": b64, "data_url": data_url})
         except Exception as e:
-            # don't fail the whole batch on one bad prompt
+            # Don't fail the batch on a single error
             out.append({"id": p.get("id") or "", "error": str(e)})
 
     return jsonify({"ok": True, "images": out})
+
 
 @bp.route("/api/v2/chat", methods=["POST"])
 def tutor_chat():
@@ -126,7 +131,7 @@ def tutor_chat():
     system = (
         "You are Mimi, a friendly French tutor. Teach gently, one step at a time. "
         "Encourage speaking. Use simple FR with tiny EN glosses when needed. "
-        "Give hints instead of full answers. Keep replies under 120 words.\n\n"
+        'Give hints instead of full answers. Keep replies under 120 words.\n\n'
         f"Lesson JSON (context):\n{lesson_ctx}"
     )
 
@@ -136,7 +141,6 @@ def tutor_chat():
             model=OPENAI_MODEL_TEXT,
             temperature=0.5,
             messages=messages,
-            # max_tokens is optional; the “under 120 words” rule usually suffices.
         )
         answer = (resp.choices[0].message.content or "").strip()
         return jsonify({"ok": True, "reply": answer})
