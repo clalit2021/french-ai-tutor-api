@@ -33,7 +33,7 @@ if SUPABASE_URL and SUPABASE_SERVICE_KEY:
         py_logger.warning("[SUPABASE] client init failed: %r", e)
 
 # ---- OpenAI (env) ----
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")           # used indirectly by mimi
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")              # used indirectly by mimi
 OPENAI_MODEL = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")  # kept for compatibility
 
 # ---- Helpers ----
@@ -144,10 +144,11 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
         content = r.content
         logger.info(f"[JOB] downloaded {len(content)} bytes from {url}")
 
-        # 2) Extract text (simple path; your ingest pipeline can replace this)
+        # 2) Extract text
         text = ""
         ext = os.path.splitext(file_path)[1].lower()
         if ext == ".pdf":
+            # Try PyMuPDF first
             try:
                 import fitz, tempfile
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -162,16 +163,22 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                 doc.close()
             except Exception as e:
                 logger.warning("[JOB] PDF text extraction failed: %r", e)
+
+            # If PDF text seems empty (likely image-only), use ABBYY on the whole PDF
+            if not (text or "").strip():
+                try:
+                    from app import ocr_abbyy
+                    text = ocr_abbyy.ocr_file_to_text(file_bytes=content, is_pdf=True, language="French")
+                    logger.info("[JOB] Used ABBYY OCR fallback for image-only PDF")
+                except Exception as e:
+                    logger.warning("[JOB] ABBYY OCR failed for PDF: %r", e)
         else:
+            # Image file → use ABBYY (no Tesseract dependency)
             try:
-                from PIL import Image
-                import pytesseract, tempfile
-                with tempfile.NamedTemporaryFile(suffix=ext or ".png", delete=False) as f:
-                    f.write(content); ipath = f.name
-                img = Image.open(ipath)
-                text = pytesseract.image_to_string(img, lang="fra")
+                from app import ocr_abbyy
+                text = ocr_abbyy.ocr_file_to_text(file_bytes=content, is_pdf=False, language="French")
             except Exception as e:
-                logger.warning("[JOB] image OCR not available: %r", e)
+                logger.warning("[JOB] ABBYY OCR failed for image: %r", e)
 
         if not (text or "").strip():
             text = "Leçon: images et lieux français. (OCR vide)"
