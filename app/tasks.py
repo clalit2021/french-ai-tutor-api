@@ -22,8 +22,8 @@ py_logger = logging.getLogger(__name__)
 bp = Blueprint("tasks", __name__)
 
 # ---- Supabase ----
-SUPABASE_URL = os.getenv("SUPABASE_URL","")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY","")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 supabase = None
 if SUPABASE_URL and SUPABASE_SERVICE_KEY:
     try:
@@ -32,16 +32,16 @@ if SUPABASE_URL and SUPABASE_SERVICE_KEY:
     except Exception as e:
         py_logger.warning("[SUPABASE] client init failed: %r", e)
 
-# ---- OpenAI ----
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY","")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL_TEXT","gpt-4o-mini")
+# ---- OpenAI (env) ----
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")           # used indirectly by mimi
+OPENAI_MODEL = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")  # kept for compatibility
 
 # ---- Helpers ----
 def _get_user_id_from_auth() -> Optional[str]:
-    auth = request.headers.get("Authorization","")
+    auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return None
-    token = auth.split(" ",1)[1]
+    token = auth.split(" ", 1)[1]
     try:
         import jwt  # requires PyJWT
         payload = jwt.decode(token, options={"verify_signature": False})
@@ -94,7 +94,7 @@ def api_lessons():
     # Create lesson row
     lesson_rec = {
         "child_id": child_id,
-        "uploaded_file_path": file_path,  # ensure this column exists (see migration below)
+        "uploaded_file_path": file_path,  # ensure this column exists
         "status": "processing"
     }
     if supabase:
@@ -108,7 +108,7 @@ def api_lessons():
         process_lesson.delay(str(lesson_id), file_path, str(child_id))
     except Exception as e:
         if supabase:
-            supabase.table("lessons").update({"status":"error"}).eq("id", lesson_id).execute()
+            supabase.table("lessons").update({"status": "error"}).eq("id", lesson_id).execute()
         return jsonify(ok=False, error=f"Enqueue failed: {e}"), 500
 
     return jsonify(ok=True, lesson_id=lesson_id, status="processing"), 202
@@ -117,7 +117,7 @@ def api_lessons():
 @bp.route("/api/lessons/<lesson_id>", methods=["GET"])
 def get_lesson(lesson_id):
     if not supabase:
-        return jsonify(status="completed", lesson={"ui_steps":[{"type":"note","text":"Dev mode lesson (no DB)."}]})
+        return jsonify(status="completed", lesson={"ui_steps": [{"type": "note", "text": "Dev mode lesson (no DB)."}]})
     lesson = supabase.table("lessons").select("*").eq("id", lesson_id).maybe_single().execute()
     if not lesson.data:
         return jsonify(error="Not found"), 404
@@ -129,7 +129,7 @@ def get_lesson(lesson_id):
 def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
 
-    def update(fields:dict):
+    def update(fields: dict):
         if supabase:
             try:
                 supabase.table("lessons").update(fields).eq("id", lesson_id).execute()
@@ -175,44 +175,31 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
 
         if not (text or "").strip():
             text = "Leçon: images et lieux français. (OCR vide)"
-        update({"ocr_text": text[:10000]})
 
-        # 3) Call OpenAI to build a tiny interactive lesson JSON
-        if OPENAI_API_KEY:
-            api = "https://api.openai.com/v1/chat/completions"
-            sys = "You are a playful French tutor for an 11-year-old. Reply ONLY valid JSON."
-            user = (
-                "Create a 2-step interactive lesson from this text. Use simple French.\n"
-                "Return {\n"
-                '  "ui_steps":[\n'
-                '    {"type":"image_card","text":"C\'est la tour Eiffel !","image_url":"https://upload.wikimedia.org/wikipedia/commons/a/a8/Tour_Eiffel_Wikimedia_Commons.jpg"},\n'
-                '    {"type":"question","question":"Où parle-t-on français ?","options":["Montréal","Tokyo"],"correct_option":0}\n'
-                "  ]\n"
-                "}. Text source:\\n" + (text[:800] or "")
+        # Save a generous OCR preview for auditing
+        update({"ocr_text": text[:20000]})
+
+        # 3) Build a full Mimi lesson from the OCR text (uses app/mimi.py)
+        try:
+            from app import mimi   # defer import to avoid startup issues
+            lesson_json = mimi.build_mimi_lesson(
+                topic="",                   # no random topic
+                ocr_text=text,              # ← your OCR output (full file)
+                image_descriptions=[],      # optional: page captions if you have them
+                age=11                      # TODO: fetch age from DB if you store it per child
             )
-            payload = {"model": OPENAI_MODEL, "messages":[{"role":"system","content":sys},{"role":"user","content":user}], "temperature":0.4}
-            resp = requests.post(
-                api,
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-                json=payload,
-                timeout=60
-            )
-            resp.raise_for_status()
-            content_text = resp.json()["choices"][0]["message"]["content"]
-            try:
-                lesson_json = _json_loose(content_text)
-            except Exception:
-                lesson_json = {"ui_steps":[{"type":"note","text":"JSON parse failed; fallback card."}]}
-        else:
-            lesson_json = {"ui_steps":[{"type":"note","text":"OPENAI_API_KEY missing. Demo step only."}]}
+        except Exception as e:
+            logger.error("[JOB] mimi lesson build failed: %r", e, exc_info=True)
+            # Visible fallback so the job completes
+            lesson_json = {"ui_steps": [{"type": "note", "text": "Lesson build failed; see logs."}]}
 
         # 4) Save & finish
         update({
             "lesson_data": lesson_json,
-            "status":"completed",
+            "status": "completed",
             "completed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         })
         logger.info(f"[JOB] lesson {lesson_id} completed")
     except Exception as e:
         logger.error(f"[JOB] failed: {e}", exc_info=True)
-        update({"status":"error"})
+        update({"status": "error"})
