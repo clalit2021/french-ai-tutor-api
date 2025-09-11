@@ -17,7 +17,19 @@ def test_api_lessons(client, monkeypatch):
         called['called'] = True
 
     monkeypatch.setattr(tasks.process_lesson, 'delay', fake_delay)
-    monkeypatch.setattr(tasks, 'supabase', None)
+    class FakeSupabase:
+        class _Insert:
+            def execute(self):
+                return type('Res', (), {'data': [{'id': 'fake-lesson-id'}]})()
+
+        class _Table:
+            def insert(self, rec):
+                return FakeSupabase._Insert()
+
+        def table(self, name):
+            return FakeSupabase._Table()
+
+    monkeypatch.setattr(tasks, 'supabase', FakeSupabase())
 
     resp = client.post('/api/lessons', json={'child_id': '123', 'file_path': 'bucket/file.pdf'})
     assert resp.status_code == 202
