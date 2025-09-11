@@ -4,11 +4,13 @@ const statusEl = $("#status");
 const asyncLogEl = $("#asyncLog");
 const asyncLessonEl = $("#asyncLesson");
 const syncLessonEl = $("#syncLesson");
-const imageStripEl = $("#imageStrip");
+const imagePreviewEl = $("#imagePreview");
+const imageTabsEl = $("#imageTabs");
 const chatBox = $("#chatBox");
 
 let lastSyncLesson = null;   // cache for chat
 let chatHistory = [];        // [{role, content}]
+let selectedImage = null;
 
 function setStatus(msg) {
   statusEl.textContent = msg;
@@ -208,7 +210,9 @@ $("#btnGenImgs").addEventListener("click", async () => {
     return;
   }
   setStatus("🎨 Génération d'images…");
-  imageStripEl.innerHTML = "";
+  imagePreviewEl.innerHTML = "";
+  imageTabsEl.innerHTML = "";
+  selectedImage = null;
   try {
     const res = await fetch("/api/v2/generate_images", {
       method: "POST",
@@ -218,17 +222,31 @@ $("#btnGenImgs").addEventListener("click", async () => {
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
 
-    (data.images || []).forEach((im) => {
+    (data.images || []).forEach((im, idx) => {
       if (im.data_url) {
+        const btn = document.createElement("button");
+        btn.className = "image-tab";
         const img = document.createElement("img");
         img.src = im.data_url;
         img.alt = im.id || "img";
-        imageStripEl.appendChild(img);
+        btn.appendChild(img);
+        btn.onclick = () => {
+          selectedImage = im.data_url;
+          imagePreviewEl.innerHTML = "";
+          const big = document.createElement("img");
+          big.src = im.data_url;
+          big.alt = im.id || "img";
+          imagePreviewEl.appendChild(big);
+          [...imageTabsEl.querySelectorAll(".image-tab")].forEach((t) => t.classList.remove("active"));
+          btn.classList.add("active");
+        };
+        imageTabsEl.appendChild(btn);
+        if (idx === 0) btn.click();
       } else if (im.error) {
         const err = document.createElement("div");
         err.className = "muted";
         err.textContent = `⚠️ ${im.id}: ${im.error}`;
-        imageStripEl.appendChild(err);
+        imageTabsEl.appendChild(err);
       }
     });
     setStatus("✅ Images prêtes");

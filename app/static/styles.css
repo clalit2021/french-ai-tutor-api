@@ -55,8 +55,11 @@ textarea{ resize:vertical }
 .preview h3{ margin:6px 0 }
 .preview ul{ margin:6px 0 10px 18px }
 
-.image-strip{ display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:8px; margin-top:10px }
-.image-strip img{ width:100%; height:auto; border-radius:12px; border:1px solid #eee }
+  #imagePreview img{ width:100%; height:auto; border-radius:12px; border:1px solid #eee }
+  .image-tabs{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
+  .image-tab{ border:1px solid #eee; padding:2px; border-radius:8px; background:#fff; cursor:pointer }
+  .image-tab img{ display:block; width:80px; height:auto; border-radius:6px }
+  .image-tab.active{ border-color:var(--brand); box-shadow:0 0 0 2px var(--brand) }
 
 .chat{
   border:1px solid #eee; background:#fff; border-radius:14px; padding:10px; height:200px; overflow:auto; display:flex; flex-direction:column; gap:6px
