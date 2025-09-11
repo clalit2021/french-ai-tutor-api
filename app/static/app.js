@@ -175,6 +175,16 @@ $("#btnBuild").addEventListener("click", async () => {
       });
       preview.appendChild(ul);
     }
+    if (Array.isArray(data.lesson.materials)) {
+      const mHead = document.createElement("h4");
+      mHead.textContent = "Matériel";
+      preview.appendChild(mHead);
+      const ml = document.createElement("ul");
+      data.lesson.materials.forEach((m) => {
+        const li = document.createElement("li"); li.textContent = m; ml.appendChild(li);
+      });
+      preview.appendChild(ml);
+    }
     syncLessonEl.innerHTML = "";
     syncLessonEl.appendChild(preview);
 

@@ -286,14 +286,30 @@ def build_mimi_lesson(topic: str = "", ocr_text: str = "", image_descriptions: O
     }
     lesson = _chat_json_strict(payload)
 
-    # Back-compat preview steps for legacy UI
+    # Ensure materials is always a list for the client
+    materials = lesson.get("materials") or []
+    if isinstance(materials, str):
+        materials = [materials]
+    lesson["materials"] = materials
+
+    # Preview snippets for specific activities
     ui_steps: List[Dict[str, str]] = []
-    for block in (lesson.get("plan") or [])[:3]:
-        name = block.get("name") or "Activité"
+    preview_keys = [
+        ("warm_up", "Warm-up"),
+        ("vocab_cards", "Vocabulary"),
+        ("mini_story", "Mini-story"),
+        ("phonics_focus", "Phonics"),
+        ("practice", "Practice"),
+        ("wrap_up", "Wrap-up"),
+    ]
+    for key, fallback in preview_keys:
+        block = lesson.get(key) or {}
+        name = block.get("name") or fallback
         script = block.get("teacher_script") or ""
-        ui_steps.append({"step": name})
-        if script:
-            ui_steps.append({"prompt": script.split("\n")[0][:140]})
+        if name or script:
+            ui_steps.append({"step": name})
+            if script:
+                ui_steps.append({"prompt": script.split("\n")[0][:140]})
 
     if not ui_steps:
         preview = (ocr_text or topic or "Nouvelle leçon").strip()[:160]
