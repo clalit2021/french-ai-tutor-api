@@ -192,6 +192,7 @@ $("#btnBuild").addEventListener("click", async () => {
       renderUiSteps(syncLessonEl, data.lesson.ui_steps);
     }
     setStatus("✅ Leçon prête");
+    $("#btnGenImgs").click();
   } catch (e) {
     setStatus("❌ " + e.message);
   }
