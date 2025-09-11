@@ -10,4 +10,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app
 
 # Default command is web; worker will override in Render settings
-CMD ["waitress-serve","--listen=0.0.0.0:5000","app.main:app"]
+# Bind Gunicorn to the port provided by Render
+CMD ["sh","-c","gunicorn -w 1 -k gthread --threads 8 --timeout 300 --bind 0.0.0.0:$PORT app.main:app"]
