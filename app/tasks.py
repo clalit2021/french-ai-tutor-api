@@ -1,5 +1,6 @@
 # app/tasks.py
-import os, json, requests, logging
+import os, json, requests, logging, re
+from collections import Counter
 from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
@@ -71,6 +72,24 @@ def _json_loose(text: str):
         if start != -1 and end != -1 and end > start:
             return json.loads(text[start:end+1])
         raise
+
+
+def extract_image_descriptions(text: str, max_items: int = 5) -> list[str]:
+    """Return key nouns/scene hints from OCR text using simple frequency analysis."""
+    if not text:
+        return []
+    # Grab alphabetic words (including accents)
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ]+", text.lower())
+    stopwords = {
+        "le", "la", "les", "un", "une", "de", "des", "et", "en", "du",
+        "que", "qui", "pour", "dans", "est", "sur", "au", "aux", "ce",
+        "ces", "se", "sa", "son", "ses", "avec", "par", "plus", "pas",
+    }
+    words = [w for w in words if w not in stopwords and len(w) > 2]
+    if not words:
+        return []
+    counts = Counter(words)
+    return [w for w, _ in counts.most_common(max_items)]
 
 # ---- API: create lesson job ----
 @bp.route("/api/lessons", methods=["POST"])
@@ -189,10 +208,11 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
         # 3) Build a full Mimi lesson from the OCR text (uses app/mimi.py)
         try:
             from app import mimi   # defer import to avoid startup issues
+            image_desc = extract_image_descriptions(text)
             lesson_json = mimi.build_mimi_lesson(
                 topic="",                   # no random topic
                 ocr_text=text,              # ← your OCR output (full file)
-                image_descriptions=[],      # optional: page captions if you have them
+                image_descriptions=image_desc,
                 age=11                      # TODO: fetch age from DB if you store it per child
             )
         except Exception as e:
