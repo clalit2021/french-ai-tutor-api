@@ -11,3 +11,10 @@ __pycache__/
 .venv/
 __pycache__/
 *.pyc
+
+# Node.js
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
