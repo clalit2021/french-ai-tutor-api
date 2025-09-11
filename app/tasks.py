@@ -1,5 +1,5 @@
 # app/tasks.py
-import os, json, requests, logging, re
+import os, requests, logging, re
 from collections import Counter
 from datetime import datetime
 from typing import Optional
@@ -62,17 +62,6 @@ def _public_storage_url(path: str) -> str:
     # Avoid double-encoding existing %xx
     safe_path = quote(path.lstrip("/"), safe="/%")
     return f"{base}/{safe_path}"
-
-def _json_loose(text: str):
-    """Extract outermost JSON object if model returns stray characters."""
-    try:
-        return json.loads(text)
-    except Exception:
-        start = text.find("{"); end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return json.loads(text[start:end+1])
-        raise
-
 
 def extract_image_descriptions(text: str, max_items: int = 5) -> list[str]:
     """Return key nouns/scene hints from OCR text using simple frequency analysis."""

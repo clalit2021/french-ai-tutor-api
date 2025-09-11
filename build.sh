@@ -89,7 +89,7 @@ PYEOF
 
 # app/tasks.py
 cat > app/tasks.py <<'PYEOF'
-import os, json, requests
+import os, requests
 from datetime import datetime
 from celery import Celery
 from celery.utils.log import get_task_logger
@@ -107,9 +107,6 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY","")
 supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_SERVICE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
-# ---- OpenAI ----
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY","")
 
 def _public_storage_url(path:str)->str:
     base = SUPABASE_URL.replace("supabase.co","supabase.co/storage/v1/object/public")
@@ -156,28 +153,13 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             text = "Leçon: images et lieux français. (OCR vide)"
         update({"ocr_text": text[:10000]})
 
-        # 3) OpenAI lesson JSON
-        if OPENAI_API_KEY:
-            api = "https://api.openai.com/v1/chat/completions"
-            sys = "You are a playful French tutor for an 11-year-old. Reply ONLY valid JSON."
-            user = f"""Create a 2-step interactive lesson from this text. Use simple French.
-Return {{
-  "ui_steps":[
-    {{"type":"image_card","text":"C'est la tour Eiffel !","image_url":"https://upload.wikimedia.org/wikipedia/commons/a/a8/Tour_Eiffel_Wikimedia_Commons.jpg"}},
-    {{"type":"question","question":"Où parle-t-on français ?","options":["Montréal","Tokyo"],"correct_option":0}}
-  ]
-}}. Text source:\\n{text[:800]}
-"""
-            payload = {"model":"gpt-4o-mini","messages":[{"role":"system","content":sys},{"role":"user","content":user}],"temperature":0.4}
-            resp = requests.post(api, headers={"Authorization":f"Bearer {OPENAI_API_KEY}","Content-Type":"application/json"}, json=payload, timeout=60)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            try:
-                lesson_json = json.loads(content)
-            except Exception:
-                lesson_json = {"ui_steps":[{"type":"note","text":"JSON parse failed; fallback card."}]}
-        else:
-            lesson_json = {"ui_steps":[{"type":"note","text":"OPENAI_API_KEY missing. Demo step only."}]}
+        # 3) Build Mimi lesson JSON
+        try:
+            from app import mimi
+            lesson_json = mimi.build_mimi_lesson(ocr_text=text)
+        except Exception as e:
+            logger.error(f"[JOB] mimi lesson build failed: {e}", exc_info=True)
+            lesson_json = {"ui_steps":[{"type":"note","text":"Lesson build failed; see logs."}]}
 
         # 4) Save
         update({"lesson_data": lesson_json, "status":"completed", "completed_at": datetime.utcnow().isoformat()})
