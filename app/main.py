@@ -23,6 +23,12 @@ try:
 except Exception as e:
     print("[BOOT] tasks blueprint not loaded:", repr(e))
 
+try:
+    from app.ingest_api import bp as ingest_bp
+    app.register_blueprint(ingest_bp)
+except Exception as e:
+    print("[BOOT] ingest blueprint not loaded:", repr(e))
+
 # ---- Health ----
 @app.get("/health")
 def health():
