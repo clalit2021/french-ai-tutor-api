@@ -91,6 +91,126 @@ function speakText(text) {
   }
 }
 
+// --- Simple TTS helpers (Web Speech API) ---
+function speak(text, { rate = 0.9 } = {}) {
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "fr-FR";
+    u.rate = rate;
+    speechSynthesis.speak(u);
+  } catch (e) {
+    console.warn("TTS failed:", e);
+  }
+}
+
+// Pick an image URL by id (if your lesson_data.images exists)
+function findImageUrl(lesson, imageRef) {
+  if (!lesson?.images?.length) return null;
+  const byId = lesson.images.find(x => x.id === imageRef);
+  if (byId?.url) return byId.url;
+  return null;
+}
+
+// Build one card node
+function card({ title, text, imgUrl, slowText }) {
+  const el = document.createElement("article");
+  el.className = "card";
+  el.innerHTML = `
+    <h3>${title}</h3>
+    ${imgUrl ? `<img alt="" src="${imgUrl}">` : ""}
+    <p class="small">${text}</p>
+    <div class="row">
+      <button class="tts normal">🔊 Lire</button>
+      <button class="tts slow">🐢 Lent</button>
+    </div>
+  `;
+  const btnNormal = el.querySelector(".tts.normal");
+  const btnSlow = el.querySelector(".tts.slow");
+  btnNormal.onclick = () => speak(slowText ?? text, { rate: 0.95 });
+  btnSlow.onclick   = () => speak(slowText ?? text, { rate: 0.8 });
+  return el;
+}
+
+// Render the whole lesson (expects your parsed lesson_data JSON)
+function renderLessonCards(lesson) {
+  const root = document.getElementById("lessonView");
+  if (!root) return;
+  root.innerHTML = "";
+
+  const duration = lesson?.duration || "30 minutes";
+  const objectives = (lesson?.objectives || []).slice(0,3).join(" • ");
+  root.appendChild(card({
+    title: lesson?.title || "Leçon",
+    text: `Durée: ${duration}${objectives ? " — Objectifs: " + objectives : ""}`,
+    imgUrl: findImageUrl(lesson, "img_cover")
+  }));
+
+  if (lesson?.vocab_cards?.length) {
+    lesson.vocab_cards.forEach(vc => {
+      const imgUrl = findImageUrl(lesson, vc.image_ref);
+      root.appendChild(card({
+        title: `Carte: ${vc.word}`,
+        text: `Répète: « ${vc.word} »`,
+        imgUrl,
+        slowText: vc.word
+      }));
+    });
+  }
+
+  if (lesson?.mini_story?.length) {
+    const storyLines = lesson.mini_story.join(" ");
+    root.appendChild(card({
+      title: "Petite histoire",
+      text: storyLines,
+      imgUrl: findImageUrl(lesson, "img_story"),
+      slowText: storyLines
+    }));
+  }
+
+  if (lesson?.phonics) {
+    const ph = lesson.phonics;
+    const text = `Son: « ${ph.grapheme} ». Exemples: ${ph.examples?.join(", ") || ""}. ${ph.tip || ""}`;
+    root.appendChild(card({
+      title: "Sons en français",
+      text,
+      imgUrl: findImageUrl(lesson, "img_phonics"),
+      slowText: text
+    }));
+  }
+
+  if (lesson?.activities?.length) {
+    lesson.activities.forEach((act, i) => {
+      const desc = act.prompt || act.type || "Activité";
+      root.appendChild(card({
+        title: `Activité ${i+1}`,
+        text: desc,
+        imgUrl: null,
+        slowText: desc
+      }));
+    });
+  }
+
+  if (lesson?.quiz?.length) {
+    const qs = lesson.quiz.map((q,i)=> `${i+1}. ${q.q || q.prompt}`).join(" ");
+    root.appendChild(card({
+      title: "Quiz rapide",
+      text: qs,
+      imgUrl: null,
+      slowText: qs
+    }));
+  }
+
+  if (lesson?.homework) {
+    root.appendChild(card({
+      title: "Devoir",
+      text: lesson.homework,
+      imgUrl: findImageUrl(lesson, "img_reward"),
+      slowText: lesson.homework
+    }));
+  }
+}
+
 /* =========================
    A) Async flow (Celery)
    ========================= */
@@ -128,6 +248,10 @@ $("#btnAsync").addEventListener("click", async () => {
           renderUiSteps(asyncLessonEl, j.lesson.ui_steps);
         } else {
           asyncLessonEl.textContent = JSON.stringify(j.lesson || {}, null, 2);
+        }
+        if (j.lesson) {
+          lastSyncLesson = j.lesson;
+          renderLessonCards(j.lesson);
         }
         return;
       }
@@ -190,14 +314,15 @@ $("#btnBuild").addEventListener("click", async () => {
     syncLessonEl.innerHTML = "";
     syncLessonEl.appendChild(preview);
 
-    if (Array.isArray(data.lesson.ui_steps)) {
-      renderUiSteps(syncLessonEl, data.lesson.ui_steps);
+      if (Array.isArray(data.lesson.ui_steps)) {
+        renderUiSteps(syncLessonEl, data.lesson.ui_steps);
+      }
+      renderLessonCards(data.lesson);
+      setStatus("✅ Leçon prête");
+      $("#btnGenImgs").click();
+    } catch (e) {
+      setStatus("❌ " + e.message);
     }
-    setStatus("✅ Leçon prête");
-    $("#btnGenImgs").click();
-  } catch (e) {
-    setStatus("❌ " + e.message);
-  }
 });
 
 /* =========================
@@ -249,6 +374,8 @@ $("#btnGenImgs").addEventListener("click", async () => {
         imageTabsEl.appendChild(err);
       }
     });
+    lastSyncLesson.images = (data.images || []).map(im => ({...im, url: im.data_url}));
+    renderLessonCards(lastSyncLesson);
     setStatus("✅ Images prêtes");
   } catch (e) {
     setStatus("❌ " + e.message);
