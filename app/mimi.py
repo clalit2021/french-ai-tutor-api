@@ -48,6 +48,9 @@ Return STRICT JSON ONLY with EXACTLY these keys:
   "image_prompts": [
     { "id": "string", "prompt": "string" }
   ],
+  "quiz": [
+    { "question": "string", "options": ["string", "..."], "correct_option": "string" }
+  ],
   "first_tutor_messages": ["string", "..."]
 }
 
@@ -61,6 +64,7 @@ Rules:
 - Include speaking aloud, call-and-response, mini-games, and a creative wrap-up.
 - Provide 5–8 kid-safe image prompts (no brands, no text in-image, no real faces).
 - Use image prompt IDs like "cover_scene", "vocab_card_<word>", "story_frame", "phonics_poster", "reward_sticker".
+- End with a short multiple-choice quiz (2–3 questions).
 """
 
 def _normalize_to_strict_schema(obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -157,6 +161,27 @@ def _normalize_to_strict_schema(obj: Dict[str, Any]) -> Dict[str, Any]:
                 if prompt:
                     image_prompts.append({"id": it.get("id") or f"img{i+1}", "prompt": prompt})
 
+    # quiz normalization
+    quiz_in = obj.get("quiz") or []
+    quiz: List[Dict[str, Any]] = []
+    if isinstance(quiz_in, list):
+        for it in quiz_in:
+            if not isinstance(it, dict):
+                continue
+            question = it.get("question")
+            options = it.get("options") or []
+            if isinstance(options, str):
+                options = [options]
+            if not isinstance(options, list):
+                options = [str(options)]
+            options = [str(o) for o in options]
+            if question and options:
+                quiz.append({
+                    "question": str(question),
+                    "options": options,
+                    "correct_option": it.get("correct_option"),
+                })
+
     first_tutor_messages = obj.get("first_tutor_messages") or obj.get("firstTutorMessages") or []
     if not isinstance(first_tutor_messages, list) or not first_tutor_messages:
         first_tutor_messages = [f"Bonjour ! {title}"]
@@ -167,6 +192,7 @@ def _normalize_to_strict_schema(obj: Dict[str, Any]) -> Dict[str, Any]:
         "materials": materials,
         "plan": plan_out,
         "image_prompts": image_prompts,
+        "quiz": quiz,
         "first_tutor_messages": first_tutor_messages,
     }
     result.update(activities)
@@ -226,6 +252,13 @@ def _chat_json_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "minutes": "0",
                 "teacher_script": "Montre un symbole français à ta famille et dis : C’est ..."
             },
+            "quiz": [
+                {
+                    "question": "Comment dit-on 'hello' en français ?",
+                    "options": ["Bonjour", "Merci", "Au revoir"],
+                    "correct_option": "Bonjour",
+                }
+            ],
             "image_prompts": [
                 {"id": "cover_scene", "prompt": "Kid-friendly illustration of the Eiffel Tower, bright colors, no text, no real faces"},
                 {"id": "vocab_card_croissant", "prompt": "Simple drawing of a croissant on a plate, no text"},
@@ -317,6 +350,14 @@ def build_mimi_lesson(topic: str = "", ocr_text: str = "", image_descriptions: O
             {"step": f"Explorons : {preview}"},
             {"prompt": "Répète : Bonjour Mimi ! Je suis prêt(e) à apprendre !"}
         ]
+    quiz = lesson.get("quiz") or []
+    for q in quiz:
+        ui_steps.append({
+            "type": "question",
+            "question": q["question"],
+            "options": q["options"],
+            "correct_option": q.get("correct_option"),
+        })
 
     lesson["ui_steps"] = ui_steps
     return lesson
