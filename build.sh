@@ -100,7 +100,7 @@ PYEOF
 
 # app/tasks.py
 cat > app/tasks.py <<'PYEOF'
-import os, requests
+import os, requests, re
 from datetime import datetime
 from celery import Celery
 from celery.utils.log import get_task_logger
@@ -122,6 +122,11 @@ if SUPABASE_URL and SUPABASE_SERVICE_KEY:
 def _public_storage_url(path:str)->str:
     base = SUPABASE_URL.replace("supabase.co","supabase.co/storage/v1/object/public")
     return f"{base}/{path}"
+
+def _redact(text:str)->str:
+    text = re.sub(r"[\w\.-]+@[\w\.-]+", "[REDACTED_EMAIL]", text)
+    text = re.sub(r"\+?\d[\d\s-]{7,}\d", "[REDACTED_PHONE]", text)
+    return text
 
 @celery_app.task(name="tasks.process_lesson", bind=True)
 def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
@@ -162,7 +167,9 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
                 logger.warning(f"[JOB] pytesseract not available: {e}")
         if not text.strip():
             text = "Leçon: images et lieux français. (OCR vide)"
-        update({"ocr_text": text[:10000]})
+        preview = _redact(text[:200])
+        logger.info(f"[JOB] OCR preview: {preview}")
+        update({"ocr_text": text[:10000], "ocr_preview": preview})
 
         # 3) Build Mimi lesson JSON
         try:

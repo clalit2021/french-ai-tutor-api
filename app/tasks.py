@@ -86,6 +86,13 @@ def derive_topic_from_text(text: str, max_words: int = 3) -> tuple[str, list[str
     topic = " ".join(image_desc[:max_words])
     return topic, image_desc
 
+
+def redact_sensitive(text: str) -> str:
+    """Redact simple sensitive patterns such as emails and phone numbers."""
+    text = re.sub(r"[\w\.-]+@[\w\.-]+", "[REDACTED_EMAIL]", text)
+    text = re.sub(r"\+?\d[\d\s-]{7,}\d", "[REDACTED_PHONE]", text)
+    return text
+
 def _vision_ocr_fallback(file_bytes: bytes, ext: str) -> str:
     """Try to OCR or describe the image/PDF using pytesseract or OpenAI vision."""
     try:
@@ -268,8 +275,10 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             update({"status": "error", "ocr_text": msg})
             return
 
-        # Save a generous OCR preview for auditing
-        update({"ocr_text": text[:20000]})
+        # Save and log a redacted preview of the OCR text
+        preview = redact_sensitive(text[:200])
+        logger.info(f"[JOB] OCR preview: {preview}")
+        update({"ocr_text": text[:20000], "ocr_preview": preview})
 
         # 3) Build a full Mimi lesson from the OCR text (uses app/mimi.py)
         try:
