@@ -80,6 +80,61 @@ def extract_image_descriptions(text: str, max_items: int = 5) -> list[str]:
     counts = Counter(words)
     return [w for w, _ in counts.most_common(max_items)]
 
+def _vision_ocr_fallback(file_bytes: bytes, ext: str) -> str:
+    """Try to OCR or describe the image/PDF using pytesseract or OpenAI vision."""
+    try:
+        import io
+        import pytesseract
+        from PIL import Image
+        import fitz  # type: ignore
+
+        text = ""
+        if ext == ".pdf":
+            try:
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
+                for page in doc:
+                    pix = page.get_pixmap()
+                    img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    text += pytesseract.image_to_string(img, lang="fra") + "\n"
+                doc.close()
+            except Exception as e:
+                logger.warning("[JOB] pytesseract PDF fallback failed: %r", e)
+        else:
+            img = Image.open(io.BytesIO(file_bytes))
+            text = pytesseract.image_to_string(img, lang="fra")
+        if text.strip():
+            return text
+    except Exception as e:
+        logger.warning("[JOB] pytesseract fallback failed: %r", e)
+
+    if OPENAI_API_KEY:
+        try:
+            import base64
+            from openai import OpenAI
+
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            b64 = base64.b64encode(file_bytes).decode("utf-8")
+            resp = client.responses.create(
+                model=os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini"),
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "Extract any visible text or briefly describe the scene in French.",
+                            },
+                            {"type": "input_image", "image_base64": b64},
+                        ],
+                    }
+                ],
+            )
+            return getattr(resp, "output_text", "")
+        except Exception as e:
+            logger.warning("[JOB] OpenAI vision fallback failed: %r", e)
+
+    return ""
+
 # ---- API: create lesson job ----
 @bp.route("/api/lessons", methods=["POST"])
 def api_lessons():
@@ -195,8 +250,11 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             except Exception as e:
                 logger.warning("[JOB] ABBYY OCR failed for image: %r", e)
 
-        # Abort if OCR yields no meaningful text
+        # Abort if OCR yields no meaningful text (try fallback vision OCR first)
         text = text or ""
+        if not text.strip():
+            logger.info("[JOB] ABBYY returned empty text; attempting vision fallback")
+            text = _vision_ocr_fallback(content, ext) or ""
         if not text.strip():
             msg = "OCR extraction returned empty text"
             logger.warning("[JOB] %s", msg)
