@@ -195,8 +195,13 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
             except Exception as e:
                 logger.warning("[JOB] ABBYY OCR failed for image: %r", e)
 
-        if not (text or "").strip():
-            text = "Leçon: images et lieux français. (OCR vide)"
+        # Abort if OCR yields no meaningful text
+        text = text or ""
+        if not text.strip():
+            msg = "OCR extraction returned empty text"
+            logger.warning("[JOB] %s", msg)
+            update({"status": "error", "ocr_text": msg})
+            return
 
         # Save a generous OCR preview for auditing
         update({"ocr_text": text[:20000]})
