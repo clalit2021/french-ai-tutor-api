@@ -90,6 +90,12 @@ def api_lessons():
     if not child_id or not file_path:
         return jsonify(ok=False, error="child_id and file_path are required"), 400
 
+    # Ensure child_id is a valid UUID
+    try:
+        child_id = str(uuid.UUID(str(child_id)))
+    except (ValueError, TypeError):
+        return jsonify(ok=False, error="child_id must be a valid UUID"), 400
+
     # Optional auth check
     user_id = _get_user_id_from_auth()
     if user_id and supabase:
