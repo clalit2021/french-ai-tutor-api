@@ -1,5 +1,5 @@
 # app/tasks.py
-import os, requests, logging, re
+import os, requests, logging, re, uuid
 from collections import Counter
 from datetime import datetime
 from typing import Optional
@@ -109,7 +109,8 @@ def api_lessons():
         lesson = supabase.table("lessons").insert(lesson_rec).execute()
         lesson_id = lesson.data[0]["id"]
     else:
-        lesson_id = "dev-lesson-id"
+        # Use a UUID string locally to mirror production IDs
+        lesson_id = str(uuid.uuid4())
 
     # Enqueue Celery job
     try:
