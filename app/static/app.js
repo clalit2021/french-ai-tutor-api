@@ -223,6 +223,12 @@ $("#btnAsync").addEventListener("click", async () => {
     return;
   }
 
+  const uuidRe = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  if (!uuidRe.test(child_id)) {
+    setStatus("❌ child_id doit être un UUID valide");
+    return;
+  }
+
   setStatus("🚀 Envoi du job…");
   try {
     const res = await fetch("/api/lessons", {
