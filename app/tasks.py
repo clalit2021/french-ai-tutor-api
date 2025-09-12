@@ -80,6 +80,12 @@ def extract_image_descriptions(text: str, max_items: int = 5) -> list[str]:
     counts = Counter(words)
     return [w for w, _ in counts.most_common(max_items)]
 
+def derive_topic_from_text(text: str, max_words: int = 3) -> tuple[str, list[str]]:
+    """Derive a concise topic from OCR text using top nouns."""
+    image_desc = extract_image_descriptions(text)
+    topic = " ".join(image_desc[:max_words])
+    return topic, image_desc
+
 def _vision_ocr_fallback(file_bytes: bytes, ext: str) -> str:
     """Try to OCR or describe the image/PDF using pytesseract or OpenAI vision."""
     try:
@@ -197,6 +203,7 @@ def get_lesson(lesson_id):
 # ---- Celery task ----
 @celery_app.task(name="tasks.process_lesson", bind=True)
 def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
+    """Background job: OCR the uploaded file, derive a topic, and build a Mimi lesson."""
     logger.info(f"[JOB] lesson={lesson_id} child={child_id} file={file_path}")
 
     def update(fields: dict):
@@ -267,9 +274,9 @@ def process_lesson(self, lesson_id: str, file_path: str, child_id: str):
         # 3) Build a full Mimi lesson from the OCR text (uses app/mimi.py)
         try:
             from app import mimi   # defer import to avoid startup issues
-            image_desc = extract_image_descriptions(text)
+            topic, image_desc = derive_topic_from_text(text)
             lesson_json = mimi.build_mimi_lesson(
-                topic="",                   # no random topic
+                topic=topic,                # derived from OCR text
                 ocr_text=text,              # ← your OCR output (full file)
                 image_descriptions=image_desc,
                 age=11                      # TODO: fetch age from DB if you store it per child
