@@ -8,6 +8,7 @@ mkdir -p app
 cat > app/main.py <<'PYEOF'
 import os
 import json
+import uuid
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from supabase import create_client, Client
@@ -63,7 +64,11 @@ def api_lessons():
         "uploaded_file_path": file_path,
         "status": "processing"
     }
-    lesson = supabase.table("lessons").insert(lesson_rec).execute() if supabase else type("X",(object,),{"data":[{"id":"dev-lesson-id"}]})()
+    lesson = (
+        supabase.table("lessons").insert(lesson_rec).execute()
+        if supabase
+        else type("X", (object,), {"data": [{"id": str(uuid.uuid4())}]})()
+    )
     lesson_id = lesson.data[0]["id"]
 
     # Enqueue Celery job
